@@ -1,13 +1,14 @@
 """xlrd-based parser for .xls files."""
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Any
 
 import xlrd
 from sqlalchemy.orm import Session
 
-from models import (
-    COLUMN_MAP, Employee, ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook,
-)
+from excel_toolkit.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
 
 
 def _extract_style_xls(book: xlrd.Book, xf_index: int) -> dict | None:
@@ -53,7 +54,7 @@ def _extract_style_xls(book: xlrd.Book, xf_index: int) -> dict | None:
     except AttributeError:
         pass
 
-    # Border (xlrd border types: 0=none, 1=thin, 2=medium, etc.)
+    # Border
     border_names = {0: None, 1: "thin", 2: "medium", 5: "thick", 6: "double"}
     try:
         border = xf.border
@@ -73,11 +74,7 @@ def _extract_style_xls(book: xlrd.Book, xf_index: int) -> dict | None:
 
 
 def _build_merge_map_xls(sheet: xlrd.sheet.Sheet) -> dict[tuple[int, int], tuple[int, int]]:
-    """Build mapping: (row, col) → (origin_row, origin_col) for merged cells.
-
-    xlrd merged_cells returns (rlo, rhi, clo, chi) with exclusive upper bounds
-    and 0-based indices.
-    """
+    """Build mapping: (row, col) -> (origin_row, origin_col) for merged cells."""
     merge_map: dict[tuple[int, int], tuple[int, int]] = {}
     for rlo, rhi, clo, chi in sheet.merged_cells:
         origin = (rlo, clo)
@@ -106,6 +103,8 @@ def import_xls(
     sheet_index: int = 0,
     header_row: int | None = None,
     field_map: dict[str, str] | None = None,
+    domain_cls: type | None = None,
+    column_map: dict[str, int] | None = None,
 ) -> ExcelSheet:
     """
     Import a .xls file into the DB.
@@ -115,10 +114,9 @@ def import_xls(
         path: Path to .xls file
         sheet_index: Sheet index (default: 0)
         header_row: 0-based header row index (auto-detected if None)
-        field_map: Mapping of Excel column header → Employee field name
-
-    Returns:
-        The created ExcelSheet ORM object.
+        field_map: Mapping of Excel column header -> domain field name
+        domain_cls: ORM class to instantiate for each data row
+        column_map: Optional dict to populate with {field_name: col_index}
 
     Note: xlrd uses 0-based row/col indices. We store them as 1-based
           in the DB for consistency with openpyxl.
@@ -139,24 +137,24 @@ def import_xls(
     session.add(sheet_obj)
     session.flush()
 
-    # ── Merge ranges (convert 0-based exclusive → 1-based inclusive) ──
+    # -- Merge ranges (convert 0-based exclusive -> 1-based inclusive) --
     merge_map = _build_merge_map_xls(sheet)
     merge_db: dict[str, ExcelMerge] = {}
 
     for rlo, rhi, clo, chi in sheet.merged_cells:
         m = ExcelMerge(
             sheet_id=sheet_obj.id,
-            min_row=rlo + 1,      # 0-based → 1-based
+            min_row=rlo + 1,
             min_col=clo + 1,
-            max_row=rhi,          # exclusive → inclusive (rhi is already +1)
+            max_row=rhi,  # exclusive -> inclusive
             max_col=chi,
         )
         session.add(m)
         session.flush()
         merge_db[f"{rlo}:{clo}"] = m
 
-    # ── Cells ───────────────────────────────────────────────────
-    origin_values: dict[tuple[int, int], str] = {}
+    # -- Cells --
+    origin_values: dict[tuple[int, int], str | None] = {}
     for (r, c), (or_, oc) in merge_map.items():
         if (or_, oc) not in origin_values:
             val = sheet.cell_value(or_, oc)
@@ -166,27 +164,22 @@ def import_xls(
         for c in range(sheet.ncols):
             cell = sheet.cell(r, c)
 
-            # Value (fill merged cells)
             if (r, c) in merge_map:
                 origin = merge_map[(r, c)]
                 raw_val = origin_values.get(origin)
             else:
                 raw_val = str(cell.value) if cell.value != "" else None
 
-            # Merge linkage
             merge_key = None
             is_origin = False
             if (r, c) in merge_map:
                 or_, oc = merge_map[(r, c)]
-                key = f"{or_}:{oc}"
-                merge_key = merge_db[key].id
+                merge_key = merge_db[f"{or_}:{oc}"].id
                 is_origin = (r == or_ and c == oc)
 
-            # Style
             style = _extract_style_xls(book, cell.xf_index) if hasattr(cell, 'xf_index') else None
 
-            # Store as 1-based for DB consistency
-            cell_obj = ExcelCell(
+            session.add(ExcelCell(
                 sheet_id=sheet_obj.id,
                 row=r + 1,
                 col=c + 1,
@@ -194,21 +187,20 @@ def import_xls(
                 style=style,
                 merge_id=merge_key,
                 is_merge_origin=is_origin,
-            )
-            session.add(cell_obj)
+            ))
 
     session.flush()
 
-    # ── Header detection + domain objects ────────────────────────
+    # -- Header detection + domain objects --
     if header_row is None:
         header_row_0 = find_header_row_xls(sheet)
     else:
-        header_row_0 = header_row  # user supplies 0-based for xls
+        header_row_0 = header_row
 
     if header_row_0 is not None:
         sheet_obj.header_row = header_row_0 + 1  # store as 1-based
 
-    if header_row_0 is not None and field_map:
+    if header_row_0 is not None and field_map and domain_cls:
         headers: dict[int, str] = {}
         for c in range(sheet.ncols):
             val = sheet.cell_value(header_row_0, c)
@@ -220,30 +212,35 @@ def import_xls(
             if header_text in field_map:
                 domain_field = field_map[header_text]
                 col_to_field[col_0] = domain_field
-                COLUMN_MAP[domain_field] = col_0 + 1  # 1-based for DB
+                if column_map is not None:
+                    column_map[domain_field] = col_0 + 1  # 1-based
 
         for r in range(header_row_0 + 1, sheet.nrows):
-            row_data: dict[str, object] = {}
+            row_data: dict[str, Any] = {}
             has_data = False
             for col_0, field_name in col_to_field.items():
                 val = sheet.cell_value(r, col_0)
-                # Fill from merge origin
                 if (val == "" or val is None) and (r, col_0) in merge_map:
                     or_, oc = merge_map[(r, col_0)]
                     val = sheet.cell_value(or_, oc)
                 if val != "" and val is not None:
                     has_data = True
-                    row_data[field_name] = val
+                    row_data[field_name] = str(val)
                 else:
                     row_data[field_name] = None
 
             if has_data:
-                emp = Employee(
-                    sheet_id=sheet_obj.id,
-                    excel_row=r + 1,  # 1-based
-                    **row_data,
-                )
-                session.add(emp)
+                try:
+                    with session.begin_nested():
+                        obj = domain_cls(
+                            sheet_id=sheet_obj.id,
+                            excel_row=r + 1,
+                            **row_data,
+                        )
+                        session.add(obj)
+                        session.flush()
+                except Exception:
+                    pass
 
     session.flush()
     return sheet_obj
