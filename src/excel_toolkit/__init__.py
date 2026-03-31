@@ -19,7 +19,7 @@ from excel_toolkit.merge import MergeResolver
 from excel_toolkit.parsers import parse_level2, parse_memorymap
 from excel_toolkit.splitter import split_regmap
 from excel_toolkit.xls_parser import import_xls
-from excel_toolkit.xlsx_parser import import_xlsx
+from excel_toolkit.xlsx_parser import SheetConfig, import_sheet, import_xlsx
 
 __all__ = [
     "Base",
@@ -32,8 +32,10 @@ __all__ = [
     "MergeResolver",
     "REGMAP_FIELD_MAP",
     "Register",
+    "SheetConfig",
     "export_from_cells",
     "export_regmap_xlsx",
+    "import_sheet",
     "import_xls",
     "import_xlsx",
     "init_db",

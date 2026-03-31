@@ -2,15 +2,44 @@
 
 from __future__ import annotations
 
+import fnmatch
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import openpyxl
 from openpyxl.cell.cell import Cell
+from sqlalchemy import insert
 from sqlalchemy.orm import Session
 
 from excel_toolkit.merge import MergeResolver
 from excel_toolkit.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
+
+# Max dicts per Core bulk insert execute() call (avoids SQLite variable limit)
+_BULK_CHUNK = 500
+
+
+@dataclass
+class SheetConfig:
+    """Per-sheet import configuration: which domain model and field mapping to use.
+
+    Example usage::
+
+        sheet_configs = {
+            "level2_*": SheetConfig(
+                field_map=REGMAP_FIELD_MAP,
+                domain_cls=Register,
+            ),
+            "memorymap": SheetConfig(
+                field_map=MEMMAP_FIELD_MAP,
+                domain_cls=MemoryMapEntry,
+            ),
+        }
+        sheets = import_xlsx(session, path, sheet_configs=sheet_configs)
+    """
+    field_map: dict[str, str] | None = None
+    domain_cls: type | None = None
+    header_row: int | None = None
 
 
 def extract_style(cell: Cell) -> dict | None:
@@ -77,114 +106,117 @@ def find_header_row(
     return None
 
 
-def import_xlsx(
+def _match_config(
+    sheet_name: str,
+    configs: dict[str, SheetConfig] | None,
+) -> SheetConfig | None:
+    """Find a SheetConfig matching the given sheet name.
+
+    Checks exact match first, then falls back to fnmatch patterns.
+    """
+    if not configs:
+        return None
+    if sheet_name in configs:
+        return configs[sheet_name]
+    for pattern, config in configs.items():
+        if fnmatch.fnmatch(sheet_name, pattern):
+            return config
+    return None
+
+
+def _import_ws(
     session: Session,
-    path: str | Path,
-    sheet_name: str | None = None,
+    ws,
+    wb_id: int,
+    *,
     header_row: int | None = None,
     field_map: dict[str, str] | None = None,
     domain_cls: type | None = None,
     column_map: dict[str, int] | None = None,
 ) -> ExcelSheet:
+    """Core: import a single openpyxl worksheet into the DB.
+
+    This is the shared implementation used by both import_sheet and import_xlsx.
     """
-    Import a .xlsx file into the DB.
-
-    Args:
-        session: SQLAlchemy session
-        path: Path to .xlsx file
-        sheet_name: Target sheet name (default: first sheet)
-        header_row: 1-based header row index (auto-detected if None)
-        field_map: Mapping of Excel column header -> domain field name
-                   e.g. {"TYPE": "type", "INDX": "indx", ...}
-        domain_cls: ORM class to instantiate for each data row
-                    (must have sheet_id, excel_row attributes)
-        column_map: Optional dict to populate with {field_name: col_index}
-
-    Returns:
-        The created ExcelSheet ORM object.
-    """
-    path = Path(path)
-
-    # Store original binary for round-trip
-    blob = path.read_bytes()
-
-    wb_xl = openpyxl.load_workbook(path, data_only=False)
-    ws = wb_xl[sheet_name] if sheet_name else wb_xl.active
-
-    # Create workbook record
-    wb_obj = ExcelWorkbook(filename=path.name, blob=blob)
-    session.add(wb_obj)
-    session.flush()
-
-    # Create sheet record
-    sheet_obj = ExcelSheet(workbook_id=wb_obj.id, name=ws.title)
+    sheet_obj = ExcelSheet(workbook_id=wb_id, name=ws.title)
     session.add(sheet_obj)
     session.flush()
 
-    # -- Merge ranges -------------------------------------------------------
+    sid = sheet_obj.id
+
+    # -- Merge ranges (Core bulk insert) ------------------------------------
     merger = MergeResolver(ws)
-    merge_db: dict[str, ExcelMerge] = {}  # "min_row:min_col" -> ExcelMerge
 
-    for mr in merger.ranges:
-        m = ExcelMerge(
-            sheet_id=sheet_obj.id,
-            min_row=mr.min_row,
-            min_col=mr.min_col,
-            max_row=mr.max_row,
-            max_col=mr.max_col,
-        )
-        session.add(m)
+    merge_dicts = [
+        {
+            "sheet_id": sid,
+            "min_row": mr.min_row,
+            "min_col": mr.min_col,
+            "max_row": mr.max_row,
+            "max_col": mr.max_col,
+        }
+        for mr in merger.ranges
+    ]
+
+    merge_id_map: dict[str, int] = {}  # "min_row:min_col" -> merge.id
+    if merge_dicts:
+        for i in range(0, len(merge_dicts), _BULK_CHUNK):
+            session.execute(insert(ExcelMerge), merge_dicts[i:i + _BULK_CHUNK])
         session.flush()
-        merge_db[f"{mr.min_row}:{mr.min_col}"] = m
 
-    # -- Cells --------------------------------------------------------------
+        # Query back IDs for cell linkage
+        for mid, mrow, mcol in (
+            session.query(ExcelMerge.id, ExcelMerge.min_row, ExcelMerge.min_col)
+            .filter(ExcelMerge.sheet_id == sid)
+            .all()
+        ):
+            merge_id_map[f"{mrow}:{mcol}"] = mid
+
+    # -- Cells (Core bulk insert) -------------------------------------------
+    cell_dicts: list[dict] = []
     for row in ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=ws.max_column):
         for cell in row:
             r, c = cell.row, cell.column
 
-            # Determine value (fill merged cells with origin value)
             if merger.is_merged(r, c):
                 raw_val = merger.get_value(r, c)
             else:
                 raw_val = str(cell.value) if cell.value is not None else None
 
-            # Merge linkage
             merge_key = None
             is_origin = merger.is_origin(r, c)
             origin = merger.get_origin(r, c)
             if origin:
-                key = f"{origin[0]}:{origin[1]}"
-                merge_key = merge_db[key].id
+                merge_key = merge_id_map.get(f"{origin[0]}:{origin[1]}")
 
-            # Style (only from the actual cell object, not merged placeholders)
             style = extract_style(cell) if cell.value is not None or is_origin else None
 
-            cell_obj = ExcelCell(
-                sheet_id=sheet_obj.id,
-                row=r,
-                col=c,
-                raw_value=raw_val,
-                style=style,
-                merge_id=merge_key,
-                is_merge_origin=is_origin,
-            )
-            session.add(cell_obj)
+            cell_dicts.append({
+                "sheet_id": sid,
+                "row": r,
+                "col": c,
+                "raw_value": raw_val,
+                "style": style,
+                "merge_id": merge_key,
+                "is_merge_origin": is_origin,
+            })
 
-    session.flush()
+    if cell_dicts:
+        for i in range(0, len(cell_dicts), _BULK_CHUNK):
+            session.execute(insert(ExcelCell), cell_dicts[i:i + _BULK_CHUNK])
+        session.flush()
 
-    # -- Header detection + domain object creation --------------------------
+    # -- Header detection + domain object creation (Core bulk insert) -------
     if header_row is None:
         header_row = find_header_row(ws, field_map=field_map)
     sheet_obj.header_row = header_row
 
     if header_row and field_map and domain_cls:
-        # Build column index mapping from header row
         headers: dict[int, str] = {}
         for cell in ws[header_row]:
             if cell.value and isinstance(cell.value, str):
                 headers[cell.column] = cell.value.strip()
 
-        # Map Excel col index -> domain field
         col_to_field: dict[int, str] = {}
         for col_idx, header_text in headers.items():
             if header_text in field_map:
@@ -193,14 +225,13 @@ def import_xlsx(
                 if column_map is not None:
                     column_map[domain_field] = col_idx
 
-        # Create domain records for data rows
+        bulk_rows: list[dict[str, Any]] = []
         for row_idx in range(header_row + 1, (ws.max_row or header_row) + 1):
             row_data: dict[str, Any] = {}
             has_data = False
             for col_idx, field_name in col_to_field.items():
                 cell = ws.cell(row=row_idx, column=col_idx)
                 val = cell.value
-                # Fill from merge origin if needed
                 if val is None and merger.is_merged(row_idx, col_idx):
                     val = merger.get_value(row_idx, col_idx)
                 if val is not None:
@@ -210,14 +241,131 @@ def import_xlsx(
                     row_data[field_name] = None
 
             if has_data:
-                obj = domain_cls(
-                    sheet_id=sheet_obj.id,
-                    excel_row=row_idx,
-                    **row_data,
-                )
-                session.add(obj)
-                session.flush()
+                row_data["sheet_id"] = sid
+                row_data["excel_row"] = row_idx
+                bulk_rows.append(row_data)
+
+        if bulk_rows:
+            for i in range(0, len(bulk_rows), _BULK_CHUNK):
+                session.execute(insert(domain_cls), bulk_rows[i:i + _BULK_CHUNK])
+            session.flush()
 
     session.flush()
+    return sheet_obj
+
+
+def import_sheet(
+    session: Session,
+    path: str | Path,
+    sheet_name: str | None = None,
+    header_row: int | None = None,
+    field_map: dict[str, str] | None = None,
+    domain_cls: type | None = None,
+    column_map: dict[str, int] | None = None,
+) -> ExcelSheet:
+    """Import a single sheet from a .xlsx file.
+
+    Opens the file, creates an ExcelWorkbook record, and imports one sheet.
+    For loading all sheets at once, use import_xlsx instead.
+
+    Args:
+        session: SQLAlchemy session.
+        path: Path to .xlsx file.
+        sheet_name: Target sheet name (default: active sheet).
+        header_row: 1-based header row index (auto-detected if None).
+        field_map: Mapping of Excel column header -> domain field name.
+        domain_cls: ORM class to instantiate for each data row.
+        column_map: Optional dict to populate with {field_name: col_index}.
+
+    Returns:
+        The created ExcelSheet ORM object.
+    """
+    path = Path(path)
+    blob = path.read_bytes()
+
+    wb_xl = openpyxl.load_workbook(path, data_only=False)
+    ws = wb_xl[sheet_name] if sheet_name else wb_xl.active
+
+    wb_obj = ExcelWorkbook(filename=path.name, blob=blob)
+    session.add(wb_obj)
+    session.flush()
+
+    sheet_obj = _import_ws(
+        session, ws, wb_obj.id,
+        header_row=header_row,
+        field_map=field_map,
+        domain_cls=domain_cls,
+        column_map=column_map,
+    )
+
     wb_xl.close()
     return sheet_obj
+
+
+def import_xlsx(
+    session: Session,
+    path: str | Path,
+    *,
+    sheet_configs: dict[str, SheetConfig] | None = None,
+) -> list[ExcelSheet]:
+    """Import all sheets from a .xlsx file.
+
+    Opens the file once, creates a single ExcelWorkbook record, and imports
+    every sheet. Each sheet is matched against sheet_configs by name
+    (supports fnmatch patterns like ``"level2_*"``).
+
+    Args:
+        session: SQLAlchemy session.
+        path: Path to .xlsx file.
+        sheet_configs: Mapping of sheet name pattern -> SheetConfig.
+            Sheets without a matching config are still imported as raw
+            cells (no domain objects).
+
+    Returns:
+        List of created ExcelSheet ORM objects, one per sheet.
+
+    Example::
+
+        from excel_toolkit import (
+            SheetConfig, REGMAP_FIELD_MAP, Register,
+            MEMMAP_FIELD_MAP, MemoryMapEntry,
+        )
+
+        sheets = import_xlsx(session, "regmap.xlsx", sheet_configs={
+            "level2_*": SheetConfig(
+                field_map=REGMAP_FIELD_MAP,
+                domain_cls=Register,
+            ),
+            "memorymap": SheetConfig(
+                field_map=MEMMAP_FIELD_MAP,
+                domain_cls=MemoryMapEntry,
+            ),
+        })
+    """
+    path = Path(path)
+    blob = path.read_bytes()
+
+    if sheet_configs is None:
+        from excel_toolkit.domain_models import _default_sheet_configs
+        sheet_configs = _default_sheet_configs()
+
+    wb_xl = openpyxl.load_workbook(path, data_only=False)
+
+    wb_obj = ExcelWorkbook(filename=path.name, blob=blob)
+    session.add(wb_obj)
+    session.flush()
+
+    sheets: list[ExcelSheet] = []
+    for name in wb_xl.sheetnames:
+        config = _match_config(name, sheet_configs)
+        ws = wb_xl[name]
+        sheet_obj = _import_ws(
+            session, ws, wb_obj.id,
+            header_row=config.header_row if config else None,
+            field_map=config.field_map if config else None,
+            domain_cls=config.domain_cls if config else None,
+        )
+        sheets.append(sheet_obj)
+
+    wb_xl.close()
+    return sheets

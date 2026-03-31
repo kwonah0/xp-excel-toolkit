@@ -23,7 +23,7 @@ os.chdir(PROJECT_ROOT)
 from excel_toolkit import (
     ExcelCell, ExcelMerge, ExcelSheet,
     Register, REGMAP_FIELD_MAP,
-    import_xlsx, init_db,
+    import_sheet, init_db,
 )
 
 SAMPLE = Path("samples/regmap_sample.xlsx")
@@ -36,9 +36,9 @@ def main():
     Session = init_db(f"sqlite:///{DB_PATH}")
 
     with Session() as session:
-        # import_xlsx에 domain_cls와 field_map을 넘기면
+        # import_sheet에 domain_cls와 field_map을 넘기면
         # 헤더를 자동 감지하고, 각 데이터 행을 Register 객체로 생성합니다.
-        sheet = import_xlsx(
+        sheet = import_sheet(
             session,
             SAMPLE,
             sheet_name="level2_common",

@@ -80,3 +80,15 @@ MEMMAP_FIELD_MAP: dict[str, str] = {
     "Comment": "comment",
     "special": "special",
 }
+
+
+# -- Default sheet configs (pattern → domain mapping) -------------------------
+# import_xlsx() uses this when sheet_configs is not provided.
+
+def _default_sheet_configs():
+    from excel_toolkit.xlsx_parser import SheetConfig
+
+    return {
+        "level2_*": SheetConfig(field_map=REGMAP_FIELD_MAP, domain_cls=Register),
+        "memorymap": SheetConfig(field_map=MEMMAP_FIELD_MAP, domain_cls=MemoryMapEntry),
+    }

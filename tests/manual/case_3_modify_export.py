@@ -22,7 +22,7 @@ os.chdir(PROJECT_ROOT)
 from excel_toolkit import (
     ExcelCell, ExcelWorkbook,
     Register, REGMAP_FIELD_MAP,
-    import_xlsx, export_regmap_xlsx, init_db,
+    import_sheet, export_regmap_xlsx, init_db,
 )
 from excel_toolkit.exporter import export_from_cells
 
@@ -43,7 +43,7 @@ def main():
         print("=" * 60)
 
         column_map: dict[str, int] = {}
-        sheet = import_xlsx(
+        sheet = import_sheet(
             session, SAMPLE,
             sheet_name="level2_common",
             field_map=REGMAP_FIELD_MAP,

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from excel_toolkit.models import ExcelSheet
 from excel_toolkit.domain_models import REGMAP_FIELD_MAP, Register
-from excel_toolkit.xlsx_parser import import_xlsx
+from excel_toolkit.xlsx_parser import import_sheet
 
 
 def parse_level2(
@@ -26,7 +26,7 @@ def parse_level2(
     Returns:
         The created ExcelSheet record.
     """
-    return import_xlsx(
+    return import_sheet(
         session, path,
         sheet_name=sheet_name,
         field_map=REGMAP_FIELD_MAP,

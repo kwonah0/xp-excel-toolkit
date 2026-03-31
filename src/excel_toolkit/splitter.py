@@ -5,14 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import openpyxl
-from sqlalchemy import distinct
+from sqlalchemy import distinct, insert
 from sqlalchemy.orm import Session
 
-from excel_toolkit.exporter import export_from_cells
 from excel_toolkit.merge import MergeResolver
 from excel_toolkit.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
 from excel_toolkit.domain_models import REGMAP_FIELD_MAP, Register
-from excel_toolkit.xlsx_parser import import_xlsx
+from excel_toolkit.xlsx_parser import _import_ws, _BULK_CHUNK
 
 
 def _build_ip_sheet(
@@ -35,56 +34,77 @@ def _build_ip_sheet(
     session.add(ip_sheet)
     session.flush()
 
-    # Copy header row cells
+    sid = ip_sheet.id
+
+    # Copy header row cells (bulk insert)
     header_cells = (
         session.query(ExcelCell)
         .filter(ExcelCell.sheet_id == src_sheet.id, ExcelCell.row == src_sheet.header_row)
         .all()
     )
-    for cell in header_cells:
-        session.add(ExcelCell(
-            sheet_id=ip_sheet.id,
-            row=1,
-            col=cell.col,
-            raw_value=cell.raw_value,
-            style=cell.style,
-        ))
+    if header_cells:
+        hdr_dicts = [
+            {
+                "sheet_id": sid, "row": 1, "col": cell.col,
+                "raw_value": cell.raw_value, "style": cell.style,
+                "merge_id": None, "is_merge_origin": False,
+            }
+            for cell in header_cells
+        ]
+        session.execute(insert(ExcelCell), hdr_dicts)
 
-    # Copy merges with row remapping
-    merge_id_map: dict[int, int] = {}
+    # Copy merges with row remapping (bulk insert + query back)
     src_merges = (
         session.query(ExcelMerge)
         .filter(ExcelMerge.sheet_id == src_sheet.id)
         .all()
     )
 
+    # Build merge dicts and track which src merge.id they came from
+    merge_dicts: list[dict] = []
+    src_merge_ids: list[int] = []  # parallel list: src merge.id per dict
     for merge in src_merges:
         covered = [r for r in src_rows if merge.min_row <= r <= merge.max_row]
 
         if merge.min_row == merge.max_row and merge.min_row in row_map:
-            new_m = ExcelMerge(
-                sheet_id=ip_sheet.id,
-                min_row=row_map[merge.min_row],
-                min_col=merge.min_col,
-                max_row=row_map[merge.min_row],
-                max_col=merge.max_col,
-            )
-            session.add(new_m)
-            session.flush()
-            merge_id_map[merge.id] = new_m.id
+            merge_dicts.append({
+                "sheet_id": sid,
+                "min_row": row_map[merge.min_row],
+                "min_col": merge.min_col,
+                "max_row": row_map[merge.min_row],
+                "max_col": merge.max_col,
+            })
+            src_merge_ids.append(merge.id)
         elif len(covered) > 1:
-            new_m = ExcelMerge(
-                sheet_id=ip_sheet.id,
-                min_row=row_map[covered[0]],
-                min_col=merge.min_col,
-                max_row=row_map[covered[-1]],
-                max_col=merge.max_col,
-            )
-            session.add(new_m)
-            session.flush()
-            merge_id_map[merge.id] = new_m.id
+            merge_dicts.append({
+                "sheet_id": sid,
+                "min_row": row_map[covered[0]],
+                "min_col": merge.min_col,
+                "max_row": row_map[covered[-1]],
+                "max_col": merge.max_col,
+            })
+            src_merge_ids.append(merge.id)
 
-    # Copy data cells, resolving merge values
+    merge_id_map: dict[int, int] = {}  # src_merge.id -> new_merge.id
+    if merge_dicts:
+        for i in range(0, len(merge_dicts), _BULK_CHUNK):
+            session.execute(insert(ExcelMerge), merge_dicts[i:i + _BULK_CHUNK])
+        session.flush()
+
+        # Query back new merge IDs, match by (min_row, min_col)
+        new_merges = (
+            session.query(ExcelMerge.id, ExcelMerge.min_row, ExcelMerge.min_col)
+            .filter(ExcelMerge.sheet_id == sid)
+            .all()
+        )
+        # Build reverse lookup: (min_row, min_col) -> new_id
+        new_merge_lookup = {(mrow, mcol): mid for mid, mrow, mcol in new_merges}
+        for md, src_id in zip(merge_dicts, src_merge_ids):
+            new_id = new_merge_lookup.get((md["min_row"], md["min_col"]))
+            if new_id:
+                merge_id_map[src_id] = new_id
+
+    # Copy data cells (bulk insert)
     data_cells = (
         session.query(ExcelCell)
         .filter(
@@ -93,6 +113,7 @@ def _build_ip_sheet(
         )
         .all()
     )
+    cell_dicts: list[dict] = []
     for cell in data_cells:
         raw_value = cell.raw_value
         if raw_value is None and merger.is_merged(cell.row, cell.col):
@@ -101,17 +122,21 @@ def _build_ip_sheet(
         new_merge_id = merge_id_map.get(cell.merge_id) if cell.merge_id else None
         is_origin = merger.is_origin(cell.row, cell.col) if cell.merge_id else False
 
-        session.add(ExcelCell(
-            sheet_id=ip_sheet.id,
-            row=row_map[cell.row],
-            col=cell.col,
-            raw_value=raw_value,
-            style=cell.style,
-            merge_id=new_merge_id,
-            is_merge_origin=is_origin,
-        ))
+        cell_dicts.append({
+            "sheet_id": sid,
+            "row": row_map[cell.row],
+            "col": cell.col,
+            "raw_value": raw_value,
+            "style": cell.style,
+            "merge_id": new_merge_id,
+            "is_merge_origin": is_origin,
+        })
 
-    session.flush()
+    if cell_dicts:
+        for i in range(0, len(cell_dicts), _BULK_CHUNK):
+            session.execute(insert(ExcelCell), cell_dicts[i:i + _BULK_CHUNK])
+        session.flush()
+
     return ip_sheet
 
 
@@ -139,19 +164,23 @@ def split_regmap(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    wb_xl = openpyxl.load_workbook(path, read_only=True)
-    sheet_names = wb_xl.sheetnames
-    wb_xl.close()
+    # Load workbook once for all sheets
+    blob = path.read_bytes()
+    wb_xl = openpyxl.load_workbook(path, data_only=False)
+
+    wb_obj = ExcelWorkbook(filename=path.name, blob=blob)
+    session.add(wb_obj)
+    session.flush()
 
     results: dict[str, Path] = {}
 
     # Only process level2_* sheets (register bit-field specs)
-    level2_sheets = [sn for sn in sheet_names if sn.startswith("level2_")]
+    level2_sheets = [sn for sn in wb_xl.sheetnames if sn.startswith("level2_")]
 
     for sn in level2_sheets:
-        src_sheet = import_xlsx(
-            session, path,
-            sheet_name=sn,
+        ws = wb_xl[sn]
+        src_sheet = _import_ws(
+            session, ws, wb_obj.id,
             field_map=REGMAP_FIELD_MAP,
             domain_cls=Register,
         )
@@ -194,6 +223,7 @@ def split_regmap(
         _export_multi_sheet(session, ip_sheets, out_path)
         results[sn] = out_path
 
+    wb_xl.close()
     return results
 
 

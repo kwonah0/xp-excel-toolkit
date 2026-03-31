@@ -10,7 +10,7 @@ os.chdir(PROJECT_ROOT)
 from excel_toolkit import (
     Base, ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook,
     REGMAP_FIELD_MAP, Register,
-    import_xlsx, export_regmap_xlsx, init_db,
+    import_sheet, export_regmap_xlsx, init_db,
 )
 
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
@@ -47,7 +47,7 @@ def test_regmap():
     session = SessionMaker()
 
     column_map: dict[str, int] = {}
-    sheet = import_xlsx(
+    sheet = import_sheet(
         session, xlsx_path,
         field_map=REGMAP_FIELD_MAP,
         domain_cls=Register,
@@ -67,8 +67,8 @@ def test_regmap():
               f"D7={r.d7}  D6={r.d6}  D5={r.d5}  D4={r.d4}  "
               f"D3={r.d3}  D2={r.d2}  D1={r.d1}  D0={r.d0}  init={r.init}")
 
-    assert len(regs) == 8, f"Expected 8 registers, got {len(regs)}"
-    print("[Import] 8 registers loaded OK")
+    assert len(regs) == 17, f"Expected 17 registers, got {len(regs)}"
+    print(f"[Import] {len(regs)} registers loaded OK")
 
     # All values should be strings
     for r in regs:
@@ -77,14 +77,14 @@ def test_regmap():
             assert val is None or isinstance(val, str), f"Field {field} is not str: {val!r}"
     print("[Import] All values are strings OK")
 
-    # Check vertical merge fill (INDX, PAGE)
-    reg_status = session.query(Register).filter_by(name="STATUS").first()
-    assert reg_status.indx == "57", f"Expected INDX=57, got {reg_status.indx}"
-    assert reg_status.page == "0", f"Expected PAGE=0, got {reg_status.page}"
+    # Check vertical merge fill (INDX, PAGE) — SENSOR_A spans rows 2-5, all share indx=57
+    reg_sensor = session.query(Register).filter_by(name="SENSOR_A", para="1").first()
+    assert reg_sensor.indx == "57", f"Expected INDX=57, got {reg_sensor.indx}"
+    assert reg_sensor.page == "0", f"Expected PAGE=0, got {reg_sensor.page}"
     print("[Import] Vertical merge fill (INDX/PAGE) OK")
 
-    # Check horizontal merge fill (bit fields)
-    reg_ctrl = session.query(Register).filter_by(name="CTRL").first()
+    # Check horizontal merge fill (bit fields) — SENSOR_A row 2 has MODE[1:0] in D6-D5
+    reg_ctrl = session.query(Register).filter_by(name="SENSOR_A", para="0").first()
     assert reg_ctrl.d6 == "MODE[1:0]", f"Expected MODE[1:0] in D6, got {reg_ctrl.d6}"
     assert reg_ctrl.d5 == "MODE[1:0]", f"Expected MODE[1:0] in D5, got {reg_ctrl.d5}"
     print("[Import] Horizontal merge fill (bit fields) OK")
@@ -98,8 +98,8 @@ def test_regmap():
         kind = "H" if m.max_col > m.min_col else "V"
         print(f"  r{m.min_row}c{m.min_col}:r{m.max_row}c{m.max_col} ({kind})")
 
-    assert len(h_merges) == 12, f"Expected 12 horizontal merges, got {len(h_merges)}"
-    assert len(v_merges) == 5, f"Expected 5 vertical merges, got {len(v_merges)}"
+    assert len(h_merges) == 26, f"Expected 26 horizontal merges, got {len(h_merges)}"
+    assert len(v_merges) == 16, f"Expected 16 vertical merges, got {len(v_merges)}"
     print("[Merge] Merge counts OK")
 
     # -- 5. Verify styles (colors) --------------------------------------
@@ -125,7 +125,7 @@ def test_regmap():
     print(f"[Style] RSVD (gray): {rsvd_cell.style}")
 
     # -- 6. Modify + Export ---------------------------------------------
-    print("\n[Modify] Changing CTRL.INIT from 0x00 to 0x80...")
+    print("\n[Modify] Changing SENSOR_A[para=0].INIT from 0x00 to 0x80...")
     reg_ctrl.init = "0x80"
     session.commit()
 
@@ -147,7 +147,7 @@ def test_regmap():
     # Merges preserved
     merge_count = len(ws_check.merged_cells.ranges)
     print(f"[Verify] Merged ranges preserved: {merge_count}")
-    assert merge_count == 17, f"Expected 17 merges, got {merge_count}"
+    assert merge_count == 42, f"Expected 42 merges, got {merge_count}"
 
     # Colors preserved (check EN cell green)
     en_check = ws_check.cell(row=2, column=6)

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from excel_toolkit.domain_models import MEMMAP_FIELD_MAP, MemoryMapEntry
 from excel_toolkit.models import ExcelSheet
-from excel_toolkit.xlsx_parser import import_xlsx
+from excel_toolkit.xlsx_parser import import_sheet
 
 
 def parse_memorymap(
@@ -26,7 +26,7 @@ def parse_memorymap(
     Returns:
         The created ExcelSheet record.
     """
-    return import_xlsx(
+    return import_sheet(
         session, path,
         sheet_name=sheet_name,
         field_map=MEMMAP_FIELD_MAP,
