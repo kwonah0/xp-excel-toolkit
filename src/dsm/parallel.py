@@ -284,137 +284,119 @@ def parallel_import_xlsx(
 def _split_sheet_worker(args: tuple) -> dict[str, Any]:
     """Worker: split one level2 sheet into per-IP xlsx.
 
-    Reads from main DB (read-only), builds workspace in :memory: DB,
-    writes output xlsx file.
+    Reads directly from main DB (read-only) → builds xlsx without
+    intermediate memory DB copy.
     """
     main_db_path, sheet_id, sheet_name, output_path = args
 
-    from sqlalchemy import create_engine, distinct, insert
+    import openpyxl
+    from openpyxl.comments import Comment
+    from sqlalchemy import create_engine, distinct
     from sqlalchemy.orm import sessionmaker
-    from dsm.models import Base, ExcelWorkbook, ExcelSheet, ExcelCell, ExcelMerge
+    from dsm.models import ExcelSheet, ExcelCell, ExcelMerge
     from dsm.domain_models import Register
     from dsm.merge import MergeResolver
-    from dsm.splitter import _build_ip_sheet, _export_multi_sheet
-
-    _CHUNK = 500
+    from dsm.exporter import _apply_style
 
     try:
-        # Read source data from main DB
         main_engine = create_engine(f"sqlite:///{main_db_path}", echo=False)
         MainSession = sessionmaker(bind=main_engine)
 
-        # Create in-memory workspace
-        mem_engine = create_engine("sqlite:///:memory:", echo=False)
-        Base.metadata.create_all(mem_engine)
-        MemSession = sessionmaker(bind=mem_engine)
-
-        with MainSession() as main_s, MemSession() as mem_s:
-            # Create workbook + sheet in memory
-            mem_wb = ExcelWorkbook(filename=f"{sheet_name}.xlsx")
-            mem_s.add(mem_wb)
-            mem_s.flush()
-
-            main_sheet = main_s.get(ExcelSheet, sheet_id)
-            mem_sheet = ExcelSheet(
-                workbook_id=mem_wb.id,
-                name=main_sheet.name,
-                header_row=main_sheet.header_row,
-            )
-            mem_s.add(mem_sheet)
-            mem_s.flush()
-
-            # Copy merges
-            merges = main_s.query(ExcelMerge).filter_by(sheet_id=sheet_id).all()
-            merge_remap: dict[int, int] = {}
-            if merges:
-                m_dicts = [
-                    {"sheet_id": mem_sheet.id, "min_row": m.min_row,
-                     "min_col": m.min_col, "max_row": m.max_row, "max_col": m.max_col}
-                    for m in merges
-                ]
-                for i in range(0, len(m_dicts), _CHUNK):
-                    mem_s.execute(insert(ExcelMerge), m_dicts[i:i + _CHUNK])
-                mem_s.flush()
-
-                # Build remap by (min_row, min_col)
-                new_merges = (
-                    mem_s.query(ExcelMerge.id, ExcelMerge.min_row, ExcelMerge.min_col)
-                    .filter(ExcelMerge.sheet_id == mem_sheet.id)
-                    .all()
-                )
-                new_lookup = {(r, c): mid for mid, r, c in new_merges}
-                for orig in merges:
-                    new_id = new_lookup.get((orig.min_row, orig.min_col))
-                    if new_id:
-                        merge_remap[orig.id] = new_id
-
-            # Copy cells
-            cells = main_s.query(ExcelCell).filter_by(sheet_id=sheet_id).all()
-            if cells:
-                c_dicts = [
-                    {"sheet_id": mem_sheet.id, "row": c.row, "col": c.col,
-                     "raw_value": c.raw_value, "style": c.style,
-                     "comment": c.comment,
-                     "merge_id": merge_remap.get(c.merge_id) if c.merge_id else None,
-                     "is_merge_origin": c.is_merge_origin}
-                    for c in cells
-                ]
-                for i in range(0, len(c_dicts), _CHUNK):
-                    mem_s.execute(insert(ExcelCell), c_dicts[i:i + _CHUNK])
-                mem_s.flush()
-
-            # Copy registers
-            regs = main_s.query(Register).filter_by(sheet_id=sheet_id).all()
-            if regs:
-                r_dicts = [
-                    {"sheet_id": mem_sheet.id, "excel_row": r.excel_row,
-                     "type": r.type, "indx": r.indx, "page": r.page,
-                     "para": r.para, "name": r.name,
-                     "d7": r.d7, "d6": r.d6, "d5": r.d5, "d4": r.d4,
-                     "d3": r.d3, "d2": r.d2, "d1": r.d1, "d0": r.d0,
-                     "init": r.init}
-                    for r in regs
-                ]
-                for i in range(0, len(r_dicts), _CHUNK):
-                    mem_s.execute(insert(Register), r_dicts[i:i + _CHUNK])
-                mem_s.flush()
-
-            # Run split logic
-            merger = MergeResolver.from_db(mem_s, mem_sheet.id)
+        with MainSession() as s:
+            src_sheet = s.get(ExcelSheet, sheet_id)
+            merger = MergeResolver.from_db(s, sheet_id)
 
             ip_names = (
-                mem_s.query(distinct(Register.name))
-                .filter(Register.sheet_id == mem_sheet.id, Register.name.isnot(None))
+                s.query(distinct(Register.name))
+                .filter(Register.sheet_id == sheet_id, Register.name.isnot(None))
+                .all()
+            )
+            if not ip_names:
+                main_engine.dispose()
+                return {"sheet_name": sheet_name, "output_path": output_path,
+                        "success": True, "error": None}
+
+            # Pre-load header cells and all source cells once
+            header_cells = (
+                s.query(ExcelCell)
+                .filter(ExcelCell.sheet_id == sheet_id,
+                        ExcelCell.row == src_sheet.header_row)
                 .all()
             )
 
-            out_wb = ExcelWorkbook(filename=f"{sheet_name}.xlsx")
-            mem_s.add(out_wb)
-            mem_s.flush()
+            # Pre-load all source merges
+            src_merges = s.query(ExcelMerge).filter_by(sheet_id=sheet_id).all()
 
-            ip_sheets: list[int] = []
+            # Build xlsx directly
+            wb = openpyxl.Workbook()
+            wb.remove(wb.active)
+
             for (ip_name,) in ip_names:
                 ip_name = ip_name.strip()
                 if not ip_name:
                     continue
+
                 ip_regs = (
-                    mem_s.query(Register)
-                    .filter(Register.sheet_id == mem_sheet.id, Register.name == ip_name)
+                    s.query(Register)
+                    .filter(Register.sheet_id == sheet_id, Register.name == ip_name)
                     .order_by(Register.excel_row)
                     .all()
                 )
                 if not ip_regs:
                     continue
-                ip_sheet = _build_ip_sheet(
-                    mem_s, mem_sheet, merger, ip_name, ip_regs, out_wb.id,
+
+                # Build row map
+                src_rows = sorted({reg.excel_row for reg in ip_regs})
+                row_map = {src_r: dst_i for dst_i, src_r in enumerate(src_rows, start=2)}
+
+                ws = wb.create_sheet(title=ip_name)
+
+                # Write header
+                for cell in header_cells:
+                    c = ws.cell(row=1, column=cell.col, value=cell.raw_value)
+                    _apply_style(c, cell.style)
+                    if cell.comment:
+                        c.comment = Comment(cell.comment, "")
+
+                # Load data cells for this IP's rows
+                data_cells = (
+                    s.query(ExcelCell)
+                    .filter(ExcelCell.sheet_id == sheet_id,
+                            ExcelCell.row.in_(src_rows))
+                    .all()
                 )
-                ip_sheets.append(ip_sheet.id)
+
+                for cell in data_cells:
+                    raw_value = cell.raw_value
+                    if raw_value is None and merger.is_merged(cell.row, cell.col):
+                        raw_value = merger.get_value(cell.row, cell.col)
+
+                    c = ws.cell(row=row_map[cell.row], column=cell.col, value=raw_value)
+                    _apply_style(c, cell.style)
+                    if cell.comment:
+                        c.comment = Comment(cell.comment, "")
+
+                # Apply remapped merges
+                for merge in src_merges:
+                    covered = [r for r in src_rows if merge.min_row <= r <= merge.max_row]
+                    if merge.min_row == merge.max_row and merge.min_row in row_map:
+                        ws.merge_cells(
+                            start_row=row_map[merge.min_row], start_column=merge.min_col,
+                            end_row=row_map[merge.min_row], end_column=merge.max_col,
+                        )
+                    elif len(covered) > 1:
+                        ws.merge_cells(
+                            start_row=row_map[covered[0]], start_column=merge.min_col,
+                            end_row=row_map[covered[-1]], end_column=merge.max_col,
+                        )
+
+                ws.freeze_panes = "A2"
 
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-            _export_multi_sheet(mem_s, ip_sheets, Path(output_path))
+            wb.save(output_path)
+            wb.close()
 
         main_engine.dispose()
-        mem_engine.dispose()
 
         return {"sheet_name": sheet_name, "output_path": output_path,
                 "success": True, "error": None}

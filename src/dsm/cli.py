@@ -243,3 +243,65 @@ def memmap(db_path: Path):
                        f"{e.midgroup or '-':>10} {e.comment or '-':<30} "
                        f"{e.special or '-':<10}")
         click.echo(f"\n{len(entries)} entries found.")
+
+
+# -- diff -------------------------------------------------------------------
+
+@main.command()
+@click.argument("path_a", type=click.Path(exists=True, path_type=Path))
+@click.argument("path_b", type=click.Path(exists=True, path_type=Path))
+@click.option("--db", "diff_db_path", type=click.Path(path_type=Path), default=None,
+              help="Save diff results to SQLite DB (default: diff_<a>_<b>.db)")
+@click.option("--verbose", "-v", is_flag=True, default=False,
+              help="Show detailed bit-field info for added registers")
+@click.option("--json", "as_json", is_flag=True, default=False,
+              help="Output as JSON")
+def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool, as_json: bool):
+    """Compare two register map DBs or xlsx files.
+
+    Accepts .db or .xlsx paths. If xlsx is given, auto-imports to DB first.
+    Use --db to save results into a queryable SQLite DB.
+
+    \b
+    Examples:
+      dsm diff old.db new.db
+      dsm diff old.db new.db --db diff_result.db
+      dsm diff old.xlsx new.xlsx -v
+    """
+    from dsm.diff import diff_with_auto_import, format_diff, save_diff_to_db
+
+    t0 = time.perf_counter()
+    result = diff_with_auto_import(path_a, path_b)
+    elapsed = time.perf_counter() - t0
+
+    if as_json:
+        import json
+        data = {
+            "added_registers": result.added_regs,
+            "removed_registers": result.removed_regs,
+            "changed_registers": [
+                {
+                    "sheet": rd.sheet, "ip": rd.ip,
+                    "indx": rd.indx, "page": rd.page, "para": rd.para,
+                    "changes": [
+                        {"field": c.field, "old": c.old, "new": c.new}
+                        for c in rd.changes
+                    ],
+                }
+                for rd in result.changed_regs
+            ],
+            "added_memmap": result.added_memmap,
+            "removed_memmap": result.removed_memmap,
+            "changed_memmap": result.changed_memmap,
+        }
+        click.echo(json.dumps(data, indent=2, ensure_ascii=False))
+    else:
+        click.echo(format_diff(result, verbose=verbose))
+
+    # Save to DB
+    if diff_db_path is None:
+        diff_db_path = Path(f"diff_{path_a.stem}_{path_b.stem}.db")
+    save_diff_to_db(result, diff_db_path, path_a, path_b)
+    click.echo(f"\nSaved to {diff_db_path}")
+
+    click.echo(f"({elapsed:.1f}s)")
