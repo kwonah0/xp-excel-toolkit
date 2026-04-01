@@ -71,7 +71,7 @@ main.add_command(import_cmd)
 # -- split ------------------------------------------------------------------
 
 @main.command()
-@click.argument("xlsx_path", type=click.Path(exists=True, path_type=Path))
+@click.argument("xlsx_path", type=click.Path(exists=True, path_type=Path), required=False, default=None)
 @click.option("--db", "db_path", type=click.Path(path_type=Path), default=None,
               help="SQLite DB path (default: <xlsx_stem>.db)")
 @click.option("--output-dir", type=click.Path(path_type=Path), default=None,
@@ -80,13 +80,24 @@ main.add_command(import_cmd)
               help="Use multiprocessing for parallel split")
 @click.option("--force-reimport", is_flag=True, default=False,
               help="Re-import even if DB already contains this workbook")
-def split(xlsx_path: Path, db_path: Path | None, output_dir: Path | None,
+def split(xlsx_path: Path | None, db_path: Path | None, output_dir: Path | None,
           parallel: bool, force_reimport: bool):
-    """Split register map by IP — one output file per level2 sheet."""
+    """Split register map by IP — one output file per level2 sheet.
+
+    If --db is given without XLSX_PATH, uses existing DB directly (no import).
+    If XLSX_PATH is given, imports first (or reuses if already in DB).
+    """
+    if xlsx_path is None and db_path is None:
+        raise click.UsageError("Either XLSX_PATH or --db must be provided.")
+
     if db_path is None:
         db_path = _default_db(xlsx_path)
+
     if output_dir is None:
-        output_dir = xlsx_path.parent / f"{xlsx_path.stem}_split"
+        if xlsx_path is not None:
+            output_dir = xlsx_path.parent / f"{xlsx_path.stem}_split"
+        else:
+            output_dir = db_path.parent / f"{db_path.stem}_split"
 
     db_url = f"sqlite:///{db_path}"
     Session = init_db(db_url)
@@ -95,24 +106,36 @@ def split(xlsx_path: Path, db_path: Path | None, output_dir: Path | None,
 
     with Session() as session:
         from dsm.models import ExcelWorkbook
-        existing = session.query(ExcelWorkbook).filter_by(
-            filename=xlsx_path.name
-        ).first()
 
-        if existing and not force_reimport:
-            click.echo(f"Reusing existing DB import for {xlsx_path.name}")
+        if xlsx_path is not None:
+            existing = session.query(ExcelWorkbook).filter_by(
+                filename=xlsx_path.name
+            ).first()
+
+            if existing and not force_reimport:
+                click.echo(f"Reusing existing DB import for {xlsx_path.name}")
+            else:
+                click.echo(f"Importing {xlsx_path.name}...")
+                from dsm.xlsx_parser import import_xlsx
+                import_xlsx(session, xlsx_path)
+                session.commit()
+            workbook_name = xlsx_path.name
         else:
-            click.echo(f"Importing {xlsx_path.name}...")
-            from dsm.xlsx_parser import import_xlsx
-            import_xlsx(session, xlsx_path)
-            session.commit()
+            # DB-only mode: find the first (or only) workbook in the DB
+            wb_obj = session.query(ExcelWorkbook).first()
+            if not wb_obj:
+                raise click.UsageError(f"DB '{db_path}' contains no imported workbooks.")
+            workbook_name = wb_obj.filename
+            click.echo(f"Using existing DB: {db_path} (workbook={workbook_name})")
 
         if parallel:
             from dsm.parallel import parallel_split_regmap
-            results = parallel_split_regmap(session, xlsx_path, output_dir)
+            # parallel_split_regmap needs xlsx_path for .name lookup;
+            # pass workbook_name as Path so .name works
+            results = parallel_split_regmap(session, Path(workbook_name), output_dir)
         else:
             from dsm.splitter import split_regmap_from_db
-            results = split_regmap_from_db(session, xlsx_path.name, output_dir)
+            results = split_regmap_from_db(session, workbook_name, output_dir)
 
         session.commit()
 
