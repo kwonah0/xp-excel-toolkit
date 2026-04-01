@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import io
+import multiprocessing as mp
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import openpyxl
 from openpyxl.cell.cell import MergedCell
@@ -108,6 +110,16 @@ def _parse_split_registers(split_path: Path) -> list[dict]:
     return results
 
 
+def _parse_split_worker(path_str: str) -> dict[str, Any]:
+    """Multiprocessing worker: parse one split xlsx file."""
+    try:
+        path = Path(path_str)
+        regs = _parse_split_registers(path)
+        return {"stem": path.stem, "regs": regs, "success": True, "error": None}
+    except Exception as e:
+        return {"stem": Path(path_str).stem, "regs": [], "success": False, "error": str(e)}
+
+
 def patch_merge(
     db_path: Path,
     split_dir: Path,
@@ -170,16 +182,31 @@ def patch_merge(
                         col_map[REGMAP_FIELD_MAP[header]] = cell.column
             column_maps[sheet_obj.name] = col_map
 
-        # --- Process each split file ---
+        # --- Parse all split files in parallel ---
         split_files = sorted(split_dir.glob("*.xlsx"))
-        for split_file in split_files:
-            source_sheet = split_file.stem  # e.g. "level2_common"
-            if source_sheet not in column_maps:
+        relevant_files = [f for f in split_files if f.stem in column_maps]
+
+        parsed_map: dict[str, list[dict]] = {}
+        if relevant_files:
+            num_workers = min(mp.cpu_count(), len(relevant_files))
+            with mp.Pool(processes=num_workers) as pool:
+                results_list = pool.map(
+                    _parse_split_worker,
+                    [str(f) for f in relevant_files],
+                )
+            for r in results_list:
+                if r["success"]:
+                    parsed_map[r["stem"]] = r["regs"]
+
+        # --- Apply parsed data to workbook ---
+        for split_file in relevant_files:
+            source_sheet = split_file.stem
+            split_regs = parsed_map.get(source_sheet, [])
+            if not split_regs:
                 continue
 
             col_map = column_maps[source_sheet]
             ws = wb[source_sheet]
-            split_regs = _parse_split_registers(split_file)
 
             for reg_data in split_regs:
                 key = (
