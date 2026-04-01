@@ -205,18 +205,21 @@ def diff_databases(
         keys_a = set(regs_a.keys())
         keys_b = set(regs_b.keys())
 
+        def _sort_key(k: tuple) -> tuple:
+            return tuple(v if v is not None else "" for v in k)
+
         # Added
-        for key in sorted(keys_b - keys_a):
+        for key in sorted(keys_b - keys_a, key=_sort_key):
             sn, reg = regs_b[key]
             result.added_regs.append(_reg_to_dict(sn, reg))
 
         # Removed
-        for key in sorted(keys_a - keys_b):
+        for key in sorted(keys_a - keys_b, key=_sort_key):
             sn, reg = regs_a[key]
             result.removed_regs.append(_reg_to_dict(sn, reg))
 
         # Changed
-        for key in sorted(keys_a & keys_b):
+        for key in sorted(keys_a & keys_b, key=_sort_key):
             sn_a, reg_a = regs_a[key]
             sn_b, reg_b = regs_b[key]
             changes = []
@@ -242,13 +245,13 @@ def diff_databases(
         mkeys_a = set(mm_a.keys())
         mkeys_b = set(mm_b.keys())
 
-        for key in sorted(mkeys_b - mkeys_a):
+        for key in sorted(mkeys_b - mkeys_a, key=_sort_key):
             result.added_memmap.append(_memmap_to_dict(mm_b[key]))
 
-        for key in sorted(mkeys_a - mkeys_b):
+        for key in sorted(mkeys_a - mkeys_b, key=_sort_key):
             result.removed_memmap.append(_memmap_to_dict(mm_a[key]))
 
-        for key in sorted(mkeys_a & mkeys_b):
+        for key in sorted(mkeys_a & mkeys_b, key=_sort_key):
             ea, eb = mm_a[key], mm_b[key]
             changes = {}
             for f in _MEMMAP_FIELDS:
