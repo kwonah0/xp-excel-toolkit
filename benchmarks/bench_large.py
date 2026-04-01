@@ -96,28 +96,8 @@ print(f"  Time: {t_import_seq:.2f}s")
 print(f"  Sheets imported: {len(sheets)}")
 print(f"  DB size: {db_path.stat().st_size / 1024 / 1024:.1f} MB")
 
-# ── 2. Import --parallel ────────────────────────────────────────────
-print("\n=== 2. dsm import --parallel ===")
-db_par_path = xlsx_path.with_name("par_bench.db")
-if db_par_path.exists():
-    db_par_path.unlink()
-
-engine_par = create_engine(f"sqlite:///{db_par_path}", echo=False)
-Base.metadata.create_all(engine_par)
-SessionPar = sessionmaker(bind=engine_par)
-
-from dsm.parallel import parallel_import_xlsx
-
-t0 = time.perf_counter()
-with SessionPar() as session:
-    sheets_par = parallel_import_xlsx(session, xlsx_path)
-    session.commit()
-t_import_par = time.perf_counter() - t0
-print(f"  Time: {t_import_par:.2f}s")
-print(f"  Sheets imported: {len(sheets_par)}")
-
-# ── 3. Split (sequential) ───────────────────────────────────────────
-print("\n=== 3. dsm split (sequential) ===")
+# ── 2. Split (sequential) ───────────────────────────────────────────
+print("\n=== 2. dsm split (sequential) ===")
 from dsm.splitter import split_regmap_from_db
 
 out_seq = output_dir / "seq"
@@ -130,8 +110,8 @@ t_split_seq = time.perf_counter() - t0
 print(f"  Time: {t_split_seq:.2f}s")
 print(f"  Files: {len(result_seq)}")
 
-# ── 4. Split --parallel ─────────────────────────────────────────────
-print("\n=== 4. dsm split --parallel ===")
+# ── 3. Split --parallel ─────────────────────────────────────────────
+print("\n=== 3. dsm split --parallel ===")
 from dsm.parallel import parallel_split_regmap
 
 out_par = output_dir / "par"
@@ -144,26 +124,8 @@ t_split_par = time.perf_counter() - t0
 print(f"  Time: {t_split_par:.2f}s")
 print(f"  Files: {len(result_par)}")
 
-# ── 5. Diff ─────────────────────────────────────────────────────────
-print("\n=== 5. dsm diff ===")
-from dsm.diff import diff_databases, save_diff_to_db
-
-# Compare seq DB vs parallel DB
-t0 = time.perf_counter()
-diff_result = diff_databases(str(db_path), str(db_par_path))
-t_diff = time.perf_counter() - t0
-print(f"  Diff time: {t_diff:.2f}s")
-print(f"  Added: {len(diff_result.added_regs)}, Removed: {len(diff_result.removed_regs)}, "
-      f"Changed: {len(diff_result.changed_regs)}")
-
-diff_db_path = xlsx_path.with_name("diff_bench.db")
-t0 = time.perf_counter()
-save_diff_to_db(diff_result, diff_db_path, Path("seq.db"), Path("par.db"))
-t_diff_save = time.perf_counter() - t0
-print(f"  Diff DB save: {t_diff_save:.2f}s")
-
-# ── 6. Query ─────────────────────────────────────────────────────────
-print("\n=== 6. Query (registers) ===")
+# ── 4. Query ─────────────────────────────────────────────────────────
+print("\n=== 4. Query (registers) ===")
 from dsm.domain_models import Register
 
 t0 = time.perf_counter()
@@ -178,19 +140,14 @@ print("\n" + "=" * 60)
 print(f"=== SUMMARY ({NUM_SHEETS} sheets × ~10K cells = ~{NUM_SHEETS * (NUM_DATA_ROWS + 1) * len(HEADERS) // 1000}K cells) ===")
 print("=" * 60)
 print(f"""
-  1. Import (sequential):   {t_import_seq:.2f}s
-  2. Import (parallel):     {t_import_par:.2f}s  {'(slower!)' if t_import_par > t_import_seq else f'({t_import_seq/t_import_par:.1f}x faster)'}
-  3. Split (sequential):    {t_split_seq:.2f}s
-  4. Split (parallel):      {t_split_par:.2f}s  ({t_split_seq/t_split_par:.1f}x faster)
-  5. Diff:                  {t_diff:.2f}s
-  6. Diff DB save:          {t_diff_save:.2f}s
-  7. Query:                 {t_query:.3f}s
+  1. Import:              {t_import_seq:.2f}s
+  2. Split (sequential):  {t_split_seq:.2f}s
+  3. Split (parallel):    {t_split_par:.2f}s  ({t_split_seq/t_split_par:.1f}x faster)
+  4. Query:               {t_query:.3f}s
 """)
 
 # Cleanup
 xlsx_path.unlink()
 db_path.unlink()
-db_par_path.unlink()
-diff_db_path.unlink(missing_ok=True)
 shutil.rmtree(output_dir)
 print("Done!")

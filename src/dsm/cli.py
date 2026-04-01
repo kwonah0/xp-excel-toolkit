@@ -24,7 +24,7 @@ def main():
 
 # -- import -----------------------------------------------------------------
 
-def _import_cmd(xlsx_path: Path, db_path: Path | None, parallel: bool, workers: int | None):
+def _import_cmd(xlsx_path: Path, db_path: Path | None):
     if db_path is None:
         db_path = _default_db(xlsx_path)
 
@@ -33,18 +33,11 @@ def _import_cmd(xlsx_path: Path, db_path: Path | None, parallel: bool, workers: 
 
     t0 = time.perf_counter()
 
-    if parallel:
-        from dsm.parallel import parallel_import_xlsx
-        with Session() as session:
-            sheets = parallel_import_xlsx(session, xlsx_path, workers=workers)
-            session.commit()
-            sheet_info = [(s.name, s.header_row) for s in sheets]
-    else:
-        from dsm.xlsx_parser import import_xlsx
-        with Session() as session:
-            sheets = import_xlsx(session, xlsx_path)
-            session.commit()
-            sheet_info = [(s.name, s.header_row) for s in sheets]
+    from dsm.xlsx_parser import import_xlsx
+    with Session() as session:
+        sheets = import_xlsx(session, xlsx_path)
+        session.commit()
+        sheet_info = [(s.name, s.header_row) for s in sheets]
 
     elapsed = time.perf_counter() - t0
     click.echo(f"Imported {len(sheet_info)} sheets into {db_path} ({elapsed:.1f}s)")
@@ -56,13 +49,9 @@ def _import_cmd(xlsx_path: Path, db_path: Path | None, parallel: bool, workers: 
 @click.argument("xlsx_path", type=click.Path(exists=True, path_type=Path))
 @click.option("--db", "db_path", type=click.Path(path_type=Path), default=None,
               help="SQLite DB path (default: <xlsx_stem>.db)")
-@click.option("--parallel/--no-parallel", default=False,
-              help="Use multiprocessing for parallel sheet import")
-@click.option("--workers", type=int, default=None,
-              help="Number of worker processes (default: cpu_count)")
-def import_cmd(xlsx_path: Path, db_path: Path | None, parallel: bool, workers: int | None):
+def import_cmd(xlsx_path: Path, db_path: Path | None):
     """Import all sheets from an xlsx file into SQLite DB."""
-    _import_cmd(xlsx_path, db_path, parallel, workers)
+    _import_cmd(xlsx_path, db_path)
 
 
 main.add_command(import_cmd)

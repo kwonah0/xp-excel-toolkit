@@ -122,35 +122,12 @@ def profile_import(xlsx_path: Path, db_path: Path):
     return db_path
 
 
-def profile_import_parallel(xlsx_path: Path, db_path: Path, workers: int = 4):
-    """Profile: dsm import --parallel."""
-    from dsm.models import init_db
-    from dsm.parallel import parallel_import_xlsx
-
-    print(f"\n=== Scenario 2: import --parallel (workers={workers}) ===")
-
-    with Timer("Total parallel import") as t_total:
-        Session = init_db(f"sqlite:///{db_path}")
-        with Session() as session:
-            with Timer("  parallel_import_xlsx()") as t_import:
-                sheets = parallel_import_xlsx(session, xlsx_path, workers=workers)
-            with Timer("  session.commit()") as t_commit:
-                session.commit()
-            sheet_info = [(s.name, s.header_row) for s in sheets]
-
-    print(t_import)
-    print(t_commit)
-    print(t_total)
-    print(f"  Imported {len(sheet_info)} sheets")
-    return db_path
-
-
 def profile_split(xlsx_path: Path, db_path: Path, output_dir: Path):
     """Profile: dsm split (from existing DB)."""
     from dsm.models import init_db
     from dsm.splitter import split_regmap_from_db
 
-    print("\n=== Scenario 3: split (sequential, from DB) ===")
+    print("\n=== Scenario 2: split (sequential, from DB) ===")
 
     with Timer("Total split") as t_total:
         Session = init_db(f"sqlite:///{db_path}")
@@ -171,7 +148,7 @@ def profile_split_parallel(xlsx_path: Path, db_path: Path, output_dir: Path, wor
     from dsm.models import init_db
     from dsm.parallel import parallel_split_regmap
 
-    print(f"\n=== Scenario 4: split --parallel (workers={workers}) ===")
+    print(f"\n=== Scenario 3: split --parallel (workers={workers}) ===")
 
     with Timer("Total parallel split") as t_total:
         Session = init_db(f"sqlite:///{db_path}")
@@ -191,7 +168,7 @@ def profile_diff(db_path_a: Path, db_path_b: Path, diff_db_path: Path):
     """Profile: dsm diff."""
     from dsm.diff import diff_databases, save_diff_to_db, format_diff
 
-    print("\n=== Scenario 5: diff ===")
+    print("\n=== Scenario 4: diff ===")
 
     with Timer("Total diff") as t_total:
         with Timer("  diff_databases()") as t_diff:
@@ -217,7 +194,7 @@ def profile_query(db_path: Path):
     from dsm.domain_models import Register, MemoryMapEntry
     from sqlalchemy import func, distinct
 
-    print("\n=== Scenario 6: query ===")
+    print("\n=== Scenario 5: query ===")
 
     Session = init_db(f"sqlite:///{db_path}")
 
@@ -263,28 +240,20 @@ def main():
             generate_large_xlsx(xlsx_path, n_sheets=20, n_rows=700)
         print(t_gen)
 
-        # 1. Import (sequential)
-        db_seq = tmpdir / "seq.db"
-        profile_import(xlsx_path, db_seq)
+        # 1. Import
+        db_path = tmpdir / "main.db"
+        profile_import(xlsx_path, db_path)
 
-        # 2. Import (parallel)
-        db_par = tmpdir / "par.db"
-        profile_import_parallel(xlsx_path, db_par, workers=4)
-
-        # 3. Split (sequential from DB)
+        # 2. Split (sequential from DB)
         split_dir_seq = tmpdir / "split_seq"
-        profile_split(xlsx_path, db_seq, split_dir_seq)
+        profile_split(xlsx_path, db_path, split_dir_seq)
 
-        # 4. Split (parallel)
+        # 3. Split (parallel)
         split_dir_par = tmpdir / "split_par"
-        profile_split_parallel(xlsx_path, db_seq, split_dir_par, workers=4)
+        profile_split_parallel(xlsx_path, db_path, split_dir_par, workers=4)
 
-        # 5. Diff (seq DB vs parallel DB — should be similar)
-        diff_db = tmpdir / "diff_result.db"
-        profile_diff(db_seq, db_par, diff_db)
-
-        # 6. Query
-        profile_query(db_seq)
+        # 4. Query
+        profile_query(db_path)
 
         # File sizes
         print("\n=== File Sizes ===")
