@@ -336,18 +336,29 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool, a
 @click.option("--input-dir", type=click.Path(exists=True, path_type=Path), required=True,
               help="Directory containing split xlsx files")
 @click.option("--output", type=click.Path(path_type=Path), default=None,
-              help="Output merged xlsx path (default: <input_dir>_merged.xlsx)")
-def merge(input_dir: Path, output: Path | None):
+              help="Output xlsx path")
+@click.option("--base", type=click.Path(exists=True, path_type=Path), default=None,
+              help="Base DB or xlsx for patch merge (preserves original formatting)")
+def merge(input_dir: Path, output: Path | None, base: Path | None):
     """Merge split xlsx files back into a single xlsx.
 
-    Takes a directory of split files (produced by 'dsm split') and combines
-    them into one xlsx. Each file becomes a sheet, with IP tabs stacked.
+    Without --base: simple stack merge (combines IP tabs vertically).
+    With --base: patch merge — applies only changed cells back onto the
+    original xlsx, preserving all formatting, extra columns, and non-level2
+    sheets.
 
     \b
     Examples:
       dsm merge --input-dir design_split/ --output merged.xlsx
-      dsm merge --input-dir design_split/
+      dsm merge --input-dir design_split/ --base original.db --output patched.xlsx
     """
+    if base is not None:
+        _do_patch_merge(input_dir, output, base)
+    else:
+        _do_stack_merge(input_dir, output)
+
+
+def _do_stack_merge(input_dir: Path, output: Path | None):
     from dsm.splitter import merge_split_files
 
     if output is None:
@@ -361,3 +372,42 @@ def merge(input_dir: Path, output: Path | None):
     click.echo(f"Merged {len(result)} sheets ({total_ips} IPs) into {output} ({elapsed:.1f}s)")
     for sheet_name, ip_names in result.items():
         click.echo(f"  {sheet_name}: {', '.join(ip_names)}")
+
+
+def _do_patch_merge(input_dir: Path, output: Path | None, base: Path):
+    from collections import defaultdict
+    from dsm.diff import _resolve_db
+    from dsm.patcher import patch_merge
+
+    db_path = _resolve_db(base)
+
+    if output is None:
+        output = input_dir.parent / f"{input_dir.name}_patched.xlsx"
+
+    t0 = time.perf_counter()
+    result = patch_merge(db_path, input_dir, output)
+    elapsed = time.perf_counter() - t0
+
+    click.echo(f"Patch merge: {len(result.changes)} cells changed ({elapsed:.1f}s)")
+    click.echo(f"Output: {output}")
+
+    if result.skipped_keys:
+        click.echo(
+            f"Warning: {len(result.skipped_keys)} registers in split "
+            f"not found in original"
+        )
+
+    # Print change summary grouped by sheet/IP
+    if result.changes:
+        by_sheet_ip: dict[tuple, list] = defaultdict(list)
+        for c in result.changes:
+            by_sheet_ip[(c.sheet_name, c.ip_name)].append(c)
+
+        for (sheet, ip), group in sorted(by_sheet_ip.items()):
+            click.echo(f"  [{sheet}] {ip}: {len(group)} changes")
+            for c in group[:5]:
+                click.echo(
+                    f"    row={c.row} {c.field}: {c.old_value!r} -> {c.new_value!r}"
+                )
+            if len(group) > 5:
+                click.echo(f"    ... and {len(group) - 5} more")
