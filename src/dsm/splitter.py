@@ -353,3 +353,104 @@ def split_regmap_from_db(
         results[src_sheet.name] = out_path
 
     return results
+
+
+# -- merge split files back ---------------------------------------------------
+
+
+def _copy_cell_style(src, dst) -> None:
+    """Copy openpyxl cell style attributes from src to dst."""
+    from copy import copy
+
+    if src.has_style:
+        dst.font = copy(src.font)
+        dst.fill = copy(src.fill)
+        dst.border = copy(src.border)
+        dst.number_format = src.number_format
+        dst.alignment = copy(src.alignment)
+
+
+def merge_split_files(
+    input_dir: Path,
+    output_path: Path,
+) -> dict[str, list[str]]:
+    """Merge split xlsx files back into a single xlsx.
+
+    Each split file's stem becomes the sheet name (e.g. level2_common.xlsx → level2_common).
+    IP tabs within each file are stacked vertically into one sheet.
+
+    Args:
+        input_dir: Directory containing split xlsx files.
+        output_path: Path for the merged output xlsx.
+
+    Returns:
+        Dict mapping sheet name to list of IP names merged.
+    """
+    from copy import copy
+    from openpyxl.comments import Comment
+
+    input_dir = Path(input_dir)
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    split_files = sorted(input_dir.glob("*.xlsx"))
+    if not split_files:
+        raise ValueError(f"No .xlsx files found in {input_dir}")
+
+    wb_out = openpyxl.Workbook()
+    wb_out.remove(wb_out.active)
+
+    result: dict[str, list[str]] = {}
+
+    for split_file in split_files:
+        source_sheet_name = split_file.stem
+        ws_out = wb_out.create_sheet(title=source_sheet_name)
+
+        split_wb = openpyxl.load_workbook(split_file)
+        ip_names: list[str] = []
+
+        # Copy header from first IP sheet (row 1)
+        first_sheet = split_wb.worksheets[0]
+        max_col = first_sheet.max_column or 1
+        for col in range(1, max_col + 1):
+            src = first_sheet.cell(row=1, column=col)
+            dst = ws_out.cell(row=1, column=col, value=src.value)
+            _copy_cell_style(src, dst)
+
+        current_row = 2
+        for ip_sheet in split_wb.worksheets:
+            ip_names.append(ip_sheet.title)
+            ip_start_row = current_row  # track where this IP starts
+            max_r = ip_sheet.max_row or 1
+            max_c = ip_sheet.max_column or 1
+
+            # Copy data rows (skip header row 1)
+            for r in range(2, max_r + 1):
+                for c in range(1, max_c + 1):
+                    src = ip_sheet.cell(row=r, column=c)
+                    dst = ws_out.cell(row=current_row, column=c, value=src.value)
+                    _copy_cell_style(src, dst)
+                    if src.comment:
+                        dst.comment = Comment(src.comment.text, src.comment.author)
+                current_row += 1
+
+            # Copy merge ranges with row offset
+            row_offset = ip_start_row - 2  # ip row 2 → ws_out ip_start_row
+            for merge_range in ip_sheet.merged_cells.ranges:
+                # Skip header merges (row 1)
+                if merge_range.min_row < 2:
+                    continue
+                ws_out.merge_cells(
+                    start_row=merge_range.min_row + row_offset,
+                    start_column=merge_range.min_col,
+                    end_row=merge_range.max_row + row_offset,
+                    end_column=merge_range.max_col,
+                )
+
+        ws_out.freeze_panes = "A2"
+        split_wb.close()
+        result[source_sheet_name] = ip_names
+
+    wb_out.save(output_path)
+    wb_out.close()
+    return result

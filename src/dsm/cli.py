@@ -328,3 +328,36 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool, a
     click.echo(f"\nSaved to {diff_db_path}")
 
     click.echo(f"({elapsed:.1f}s)")
+
+
+# -- merge ------------------------------------------------------------------
+
+@main.command()
+@click.option("--input-dir", type=click.Path(exists=True, path_type=Path), required=True,
+              help="Directory containing split xlsx files")
+@click.option("--output", type=click.Path(path_type=Path), default=None,
+              help="Output merged xlsx path (default: <input_dir>_merged.xlsx)")
+def merge(input_dir: Path, output: Path | None):
+    """Merge split xlsx files back into a single xlsx.
+
+    Takes a directory of split files (produced by 'dsm split') and combines
+    them into one xlsx. Each file becomes a sheet, with IP tabs stacked.
+
+    \b
+    Examples:
+      dsm merge --input-dir design_split/ --output merged.xlsx
+      dsm merge --input-dir design_split/
+    """
+    from dsm.splitter import merge_split_files
+
+    if output is None:
+        output = input_dir.parent / f"{input_dir.name}_merged.xlsx"
+
+    t0 = time.perf_counter()
+    result = merge_split_files(input_dir, output)
+    elapsed = time.perf_counter() - t0
+
+    total_ips = sum(len(ips) for ips in result.values())
+    click.echo(f"Merged {len(result)} sheets ({total_ips} IPs) into {output} ({elapsed:.1f}s)")
+    for sheet_name, ip_names in result.items():
+        click.echo(f"  {sheet_name}: {', '.join(ip_names)}")
