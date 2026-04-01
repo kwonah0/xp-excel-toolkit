@@ -6,9 +6,9 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from excel_toolkit.models import ExcelSheet
-from excel_toolkit.domain_models import REGMAP_FIELD_MAP, Register
-from excel_toolkit.xlsx_parser import import_sheet
+from dsm.models import ExcelSheet
+from dsm.domain_models import REGMAP_FIELD_MAP, Register
+from dsm.xlsx_parser import import_sheet
 
 
 def parse_level2(

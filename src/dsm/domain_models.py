@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import ForeignKey, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from excel_toolkit.models import Base, ExcelSheet
+from dsm.models import Base, ExcelSheet
 
 
 # -- Register (level2_* sheets) --------------------------------------------
@@ -86,7 +86,7 @@ MEMMAP_FIELD_MAP: dict[str, str] = {
 # import_xlsx() uses this when sheet_configs is not provided.
 
 def _default_sheet_configs():
-    from excel_toolkit.xlsx_parser import SheetConfig
+    from dsm.xlsx_parser import SheetConfig
 
     return {
         "level2_*": SheetConfig(field_map=REGMAP_FIELD_MAP, domain_cls=Register),

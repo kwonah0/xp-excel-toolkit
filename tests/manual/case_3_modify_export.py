@@ -19,12 +19,12 @@ import openpyxl
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 os.chdir(PROJECT_ROOT)
 
-from excel_toolkit import (
+from dsm import (
     ExcelCell, ExcelWorkbook,
     Register, REGMAP_FIELD_MAP,
     import_sheet, export_regmap_xlsx, init_db,
 )
-from excel_toolkit.exporter import export_from_cells
+from dsm.exporter import export_from_cells
 
 SAMPLE = Path("samples/regmap_sample.xlsx")
 DB_PATH = Path("samples/case_3.db")

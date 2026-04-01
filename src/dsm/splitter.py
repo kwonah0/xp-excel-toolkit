@@ -8,10 +8,10 @@ import openpyxl
 from sqlalchemy import distinct, insert
 from sqlalchemy.orm import Session
 
-from excel_toolkit.merge import MergeResolver
-from excel_toolkit.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
-from excel_toolkit.domain_models import REGMAP_FIELD_MAP, Register
-from excel_toolkit.xlsx_parser import _import_ws, _BULK_CHUNK
+from dsm.merge import MergeResolver
+from dsm.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
+from dsm.domain_models import REGMAP_FIELD_MAP, Register
+from dsm.xlsx_parser import _import_ws, _BULK_CHUNK
 
 
 def _build_ip_sheet(
@@ -47,6 +47,7 @@ def _build_ip_sheet(
             {
                 "sheet_id": sid, "row": 1, "col": cell.col,
                 "raw_value": cell.raw_value, "style": cell.style,
+                "comment": cell.comment,
                 "merge_id": None, "is_merge_origin": False,
             }
             for cell in header_cells
@@ -128,6 +129,7 @@ def _build_ip_sheet(
             "col": cell.col,
             "raw_value": raw_value,
             "style": cell.style,
+            "comment": cell.comment,
             "merge_id": new_merge_id,
             "is_merge_origin": is_origin,
         })
@@ -233,7 +235,8 @@ def _export_multi_sheet(
     output_path: Path,
 ) -> None:
     """Export multiple ExcelSheet records into one xlsx file, each as a sheet."""
-    from excel_toolkit.exporter import _apply_style
+    from openpyxl.comments import Comment
+    from dsm.exporter import _apply_style
 
     wb = openpyxl.Workbook()
     wb.remove(wb.active)  # remove default sheet
@@ -251,6 +254,8 @@ def _export_multi_sheet(
         for cell_rec in cells:
             c = ws.cell(row=cell_rec.row, column=cell_rec.col, value=cell_rec.raw_value)
             _apply_style(c, cell_rec.style)
+            if cell_rec.comment:
+                c.comment = Comment(cell_rec.comment, "")
 
         # Apply merges
         merges = (
@@ -269,3 +274,82 @@ def _export_multi_sheet(
 
     wb.save(output_path)
     wb.close()
+
+
+def split_regmap_from_db(
+    session: Session,
+    workbook_filename: str,
+    output_dir: str | Path,
+) -> dict[str, Path]:
+    """Split regmap using already-imported DB data (no xlsx reload needed).
+
+    Args:
+        session: SQLAlchemy session with previously imported data.
+        workbook_filename: Filename to match in ExcelWorkbook table.
+        output_dir: Directory to write output files.
+
+    Returns:
+        Dict mapping source sheet name to output file path.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    wb_obj = (
+        session.query(ExcelWorkbook)
+        .filter_by(filename=workbook_filename)
+        .first()
+    )
+    if not wb_obj:
+        raise ValueError(
+            f"Workbook '{workbook_filename}' not found in DB. Run 'dsm import' first."
+        )
+
+    level2_sheets = (
+        session.query(ExcelSheet)
+        .filter(ExcelSheet.workbook_id == wb_obj.id, ExcelSheet.name.like("level2_%"))
+        .all()
+    )
+
+    results: dict[str, Path] = {}
+
+    for src_sheet in level2_sheets:
+        merger = MergeResolver.from_db(session, src_sheet.id)
+
+        ip_names = (
+            session.query(distinct(Register.name))
+            .filter(Register.sheet_id == src_sheet.id, Register.name.isnot(None))
+            .all()
+        )
+        if not ip_names:
+            continue
+
+        out_wb = ExcelWorkbook(filename=f"{src_sheet.name}.xlsx")
+        session.add(out_wb)
+        session.flush()
+
+        ip_sheets: list[int] = []
+
+        for (ip_name,) in ip_names:
+            ip_name = ip_name.strip()
+            if not ip_name:
+                continue
+
+            registers = (
+                session.query(Register)
+                .filter(Register.sheet_id == src_sheet.id, Register.name == ip_name)
+                .order_by(Register.excel_row)
+                .all()
+            )
+            if not registers:
+                continue
+
+            ip_sheet = _build_ip_sheet(
+                session, src_sheet, merger, ip_name, registers, out_wb.id,
+            )
+            ip_sheets.append(ip_sheet.id)
+
+        out_path = output_dir / f"{src_sheet.name}.xlsx"
+        _export_multi_sheet(session, ip_sheets, out_path)
+        results[src_sheet.name] = out_path
+
+    return results

@@ -8,7 +8,7 @@ from typing import Any
 import xlrd
 from sqlalchemy.orm import Session
 
-from excel_toolkit.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
+from dsm.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
 
 
 def _extract_style_xls(book: xlrd.Book, xf_index: int) -> dict | None:

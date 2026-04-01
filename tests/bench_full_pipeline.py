@@ -31,10 +31,10 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy import create_engine, insert, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from excel_toolkit.models import Base, ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
-from excel_toolkit.domain_models import REGMAP_FIELD_MAP, Register
-from excel_toolkit.merge import MergeResolver
-from excel_toolkit.xlsx_parser import extract_style, find_header_row
+from dsm.models import Base, ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
+from dsm.domain_models import REGMAP_FIELD_MAP, Register
+from dsm.merge import MergeResolver
+from dsm.xlsx_parser import extract_style, find_header_row
 
 
 # ── 1. Generate large sample xlsx ─────────────────────────────────────

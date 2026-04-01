@@ -20,7 +20,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 os.chdir(PROJECT_ROOT)
 
-from excel_toolkit import (
+from dsm import (
     ExcelCell, ExcelMerge, ExcelSheet,
     Register, REGMAP_FIELD_MAP,
     import_sheet, init_db,

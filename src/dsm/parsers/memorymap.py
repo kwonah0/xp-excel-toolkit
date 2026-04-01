@@ -6,9 +6,9 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from excel_toolkit.domain_models import MEMMAP_FIELD_MAP, MemoryMapEntry
-from excel_toolkit.models import ExcelSheet
-from excel_toolkit.xlsx_parser import import_sheet
+from dsm.domain_models import MEMMAP_FIELD_MAP, MemoryMapEntry
+from dsm.models import ExcelSheet
+from dsm.xlsx_parser import import_sheet
 
 
 def parse_memorymap(

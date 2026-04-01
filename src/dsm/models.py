@@ -66,6 +66,7 @@ class ExcelCell(Base):
     col: Mapped[int]
     raw_value: Mapped[str | None] = mapped_column(Text)
     style: Mapped[dict | None] = mapped_column(JSON)  # {bg_color, font_bold, number_format, ...}
+    comment: Mapped[str | None] = mapped_column(Text)  # Excel cell note/comment text
     merge_id: Mapped[int | None] = mapped_column(ForeignKey("excel_merge.id"))
     is_merge_origin: Mapped[bool] = mapped_column(default=False)
 

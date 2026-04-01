@@ -12,8 +12,8 @@ from openpyxl.cell.cell import Cell
 from sqlalchemy import insert
 from sqlalchemy.orm import Session
 
-from excel_toolkit.merge import MergeResolver
-from excel_toolkit.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
+from dsm.merge import MergeResolver
+from dsm.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
 
 # Max dicts per Core bulk insert execute() call (avoids SQLite variable limit)
 _BULK_CHUNK = 500
@@ -190,6 +190,7 @@ def _import_ws(
                 merge_key = merge_id_map.get(f"{origin[0]}:{origin[1]}")
 
             style = extract_style(cell) if cell.value is not None or is_origin else None
+            comment_text = cell.comment.text if cell.comment else None
 
             cell_dicts.append({
                 "sheet_id": sid,
@@ -197,6 +198,7 @@ def _import_ws(
                 "col": c,
                 "raw_value": raw_val,
                 "style": style,
+                "comment": comment_text,
                 "merge_id": merge_key,
                 "is_merge_origin": is_origin,
             })
@@ -326,7 +328,7 @@ def import_xlsx(
 
     Example::
 
-        from excel_toolkit import (
+        from dsm import (
             SheetConfig, REGMAP_FIELD_MAP, Register,
             MEMMAP_FIELD_MAP, MemoryMapEntry,
         )
@@ -346,7 +348,7 @@ def import_xlsx(
     blob = path.read_bytes()
 
     if sheet_configs is None:
-        from excel_toolkit.domain_models import _default_sheet_configs
+        from dsm.domain_models import _default_sheet_configs
         sheet_configs = _default_sheet_configs()
 
     wb_xl = openpyxl.load_workbook(path, data_only=False)

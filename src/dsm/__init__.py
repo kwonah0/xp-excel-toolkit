@@ -1,6 +1,6 @@
-"""Excel toolkit with ORM, dual format (.xlsx/.xls) support."""
+"""DSM — Design Specification Manager for register map Excel files."""
 
-from excel_toolkit.models import (
+from dsm.models import (
     Base,
     ExcelCell,
     ExcelMerge,
@@ -8,18 +8,18 @@ from excel_toolkit.models import (
     ExcelWorkbook,
     init_db,
 )
-from excel_toolkit.domain_models import (
+from dsm.domain_models import (
     MEMMAP_FIELD_MAP,
     MemoryMapEntry,
     REGMAP_FIELD_MAP,
     Register,
 )
-from excel_toolkit.exporter import export_from_cells, export_regmap_xlsx
-from excel_toolkit.merge import MergeResolver
-from excel_toolkit.parsers import parse_level2, parse_memorymap
-from excel_toolkit.splitter import split_regmap
-from excel_toolkit.xls_parser import import_xls
-from excel_toolkit.xlsx_parser import SheetConfig, import_sheet, import_xlsx
+from dsm.exporter import export_from_cells, export_regmap_xlsx
+from dsm.merge import MergeResolver
+from dsm.parsers import parse_level2, parse_memorymap
+from dsm.splitter import split_regmap
+from dsm.xls_parser import import_xls
+from dsm.xlsx_parser import SheetConfig, import_sheet, import_xlsx
 
 __all__ = [
     "Base",

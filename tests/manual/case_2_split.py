@@ -19,7 +19,7 @@ import openpyxl
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 os.chdir(PROJECT_ROOT)
 
-from excel_toolkit import split_regmap, init_db
+from dsm import split_regmap, init_db
 
 SAMPLE = Path("samples/regmap_sample.xlsx")
 OUTPUT_DIR = Path("samples/split_output")

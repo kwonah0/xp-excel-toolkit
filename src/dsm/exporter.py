@@ -7,12 +7,13 @@ from pathlib import Path
 
 import openpyxl
 from openpyxl.cell.cell import MergedCell
+from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session
 
-from excel_toolkit.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
-from excel_toolkit.domain_models import REGMAP_FIELD_MAP, Register
+from dsm.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
+from dsm.domain_models import REGMAP_FIELD_MAP, Register
 
 
 # Reverse map: field_name -> header_text
@@ -148,6 +149,8 @@ def export_from_cells(
     for cell_rec in cells:
         c = ws.cell(row=cell_rec.row, column=cell_rec.col, value=cell_rec.raw_value)
         _apply_style(c, cell_rec.style)
+        if cell_rec.comment:
+            c.comment = Comment(cell_rec.comment, "")
 
     # Apply merges
     merges = (

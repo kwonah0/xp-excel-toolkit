@@ -19,7 +19,7 @@ os.chdir(PROJECT_ROOT)
 
 from sqlalchemy import distinct
 
-from excel_toolkit import (
+from dsm import (
     Register, MemoryMapEntry,
     parse_level2, parse_memorymap,
     init_db,
