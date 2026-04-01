@@ -6,7 +6,7 @@ import io
 import multiprocessing as mp
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import openpyxl
 from openpyxl.cell.cell import MergedCell
@@ -124,6 +124,7 @@ def patch_merge(
     db_path: Path,
     split_dir: Path,
     output_path: Path,
+    on_progress: Callable[[str], None] | None = None,
 ) -> PatchResult:
     """Apply edits from split xlsx files back onto the original xlsx.
 
@@ -140,6 +141,8 @@ def patch_merge(
 
     with Session() as session:
         # --- Load original workbook blob ---
+        if on_progress:
+            on_progress("Loading original workbook from DB...")
         wb_obj = session.query(ExcelWorkbook).first()
         if not wb_obj or not wb_obj.blob:
             raise ValueError("No workbook blob found in DB")
@@ -147,6 +150,8 @@ def patch_merge(
         wb = openpyxl.load_workbook(io.BytesIO(wb_obj.blob))
 
         # --- Build original register index: key → Register ---
+        if on_progress:
+            on_progress("Building register index from DB...")
         original_regs: dict[tuple, Register] = {}
         sheet_names: dict[int, str] = {}
         level2_sheets: list[ExcelSheet] = (
@@ -185,6 +190,8 @@ def patch_merge(
         # --- Parse all split files in parallel ---
         split_files = sorted(split_dir.glob("*.xlsx"))
         relevant_files = [f for f in split_files if f.stem in column_maps]
+        if on_progress:
+            on_progress(f"Parsing {len(relevant_files)} split files...")
 
         parsed_map: dict[str, list[dict]] = {}
         if relevant_files:
@@ -199,6 +206,8 @@ def patch_merge(
                     parsed_map[r["stem"]] = r["regs"]
 
         # --- Apply parsed data to workbook ---
+        if on_progress:
+            on_progress("Applying patches to workbook...")
         for split_file in relevant_files:
             source_sheet = split_file.stem
             split_regs = parsed_map.get(source_sheet, [])
@@ -271,6 +280,8 @@ def patch_merge(
                     if comment_text != existing:
                         cell.comment = Comment(comment_text, "")
 
+    if on_progress:
+        on_progress(f"Saving patched workbook: {output_path.name}")
     wb.save(output_path)
     wb.close()
     return result

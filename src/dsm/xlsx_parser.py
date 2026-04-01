@@ -5,7 +5,7 @@ from __future__ import annotations
 import fnmatch
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import openpyxl
 from openpyxl.cell.cell import Cell
@@ -309,6 +309,7 @@ def import_xlsx(
     path: str | Path,
     *,
     sheet_configs: dict[str, SheetConfig] | None = None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> list[ExcelSheet]:
     """Import all sheets from a .xlsx file.
 
@@ -351,14 +352,19 @@ def import_xlsx(
         from dsm.domain_models import _default_sheet_configs
         sheet_configs = _default_sheet_configs()
 
+    if on_progress:
+        on_progress(f"Loading workbook: {path.name}")
     wb_xl = openpyxl.load_workbook(path, data_only=False)
 
     wb_obj = ExcelWorkbook(filename=path.name, blob=blob)
     session.add(wb_obj)
     session.flush()
 
+    total = len(wb_xl.sheetnames)
     sheets: list[ExcelSheet] = []
-    for name in wb_xl.sheetnames:
+    for idx, name in enumerate(wb_xl.sheetnames, 1):
+        if on_progress:
+            on_progress(f"  [{idx}/{total}] Importing sheet: {name}")
         config = _match_config(name, sheet_configs)
         ws = wb_xl[name]
         sheet_obj = _import_ws(

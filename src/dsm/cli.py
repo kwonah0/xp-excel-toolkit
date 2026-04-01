@@ -35,7 +35,8 @@ def _import_cmd(xlsx_path: Path, db_path: Path | None):
 
     from dsm.xlsx_parser import import_xlsx
     with Session() as session:
-        sheets = import_xlsx(session, xlsx_path)
+        sheets = import_xlsx(session, xlsx_path, on_progress=click.echo)
+        click.echo("Committing to DB...")
         session.commit()
         sheet_info = [(s.name, s.header_row) for s in sheets]
 
@@ -106,7 +107,7 @@ def split(xlsx_path: Path | None, db_path: Path | None, output_dir: Path | None,
             else:
                 click.echo(f"Importing {xlsx_path.name}...")
                 from dsm.xlsx_parser import import_xlsx
-                import_xlsx(session, xlsx_path)
+                import_xlsx(session, xlsx_path, on_progress=click.echo)
                 session.commit()
             workbook_name = xlsx_path.name
         else:
@@ -117,6 +118,7 @@ def split(xlsx_path: Path | None, db_path: Path | None, output_dir: Path | None,
             workbook_name = wb_obj.filename
             click.echo(f"Using existing DB: {db_path} (workbook={workbook_name})")
 
+        click.echo(f"Splitting into {output_dir}...")
         if parallel:
             from dsm.parallel import parallel_split_regmap
             # parallel_split_regmap needs xlsx_path for .name lookup;
@@ -124,7 +126,8 @@ def split(xlsx_path: Path | None, db_path: Path | None, output_dir: Path | None,
             results = parallel_split_regmap(session, Path(workbook_name), output_dir)
         else:
             from dsm.splitter import split_regmap_from_db
-            results = split_regmap_from_db(session, workbook_name, output_dir)
+            results = split_regmap_from_db(session, workbook_name, output_dir,
+                                           on_progress=click.echo)
 
         session.commit()
 
@@ -283,7 +286,7 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool, a
     from dsm.diff import diff_with_auto_import, format_diff, save_diff_to_db
 
     t0 = time.perf_counter()
-    result = diff_with_auto_import(path_a, path_b)
+    result = diff_with_auto_import(path_a, path_b, on_progress=click.echo)
     elapsed = time.perf_counter() - t0
 
     if as_json:
@@ -354,7 +357,8 @@ def _do_stack_merge(input_dir: Path, output: Path | None):
         output = input_dir.parent / f"{input_dir.name}_merged.xlsx"
 
     t0 = time.perf_counter()
-    result = merge_split_files(input_dir, output)
+    click.echo(f"Stack merge from {input_dir}...")
+    result = merge_split_files(input_dir, output, on_progress=click.echo)
     elapsed = time.perf_counter() - t0
 
     total_ips = sum(len(ips) for ips in result.values())
@@ -368,13 +372,14 @@ def _do_patch_merge(input_dir: Path, output: Path | None, base: Path):
     from dsm.diff import _resolve_db
     from dsm.patcher import patch_merge
 
-    db_path = _resolve_db(base)
+    click.echo(f"Resolving base: {base}")
+    db_path = _resolve_db(base, on_progress=click.echo)
 
     if output is None:
         output = input_dir.parent / f"{input_dir.name}_patched.xlsx"
 
     t0 = time.perf_counter()
-    result = patch_merge(db_path, input_dir, output)
+    result = patch_merge(db_path, input_dir, output, on_progress=click.echo)
     elapsed = time.perf_counter() - t0
 
     click.echo(f"Patch merge: {len(result.changes)} cells changed ({elapsed:.1f}s)")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 import openpyxl
 from sqlalchemy import distinct, insert
@@ -280,6 +281,7 @@ def split_regmap_from_db(
     session: Session,
     workbook_filename: str,
     output_dir: str | Path,
+    on_progress: Callable[[str], None] | None = None,
 ) -> dict[str, Path]:
     """Split regmap using already-imported DB data (no xlsx reload needed).
 
@@ -311,8 +313,11 @@ def split_regmap_from_db(
     )
 
     results: dict[str, Path] = {}
+    total = len(level2_sheets)
 
-    for src_sheet in level2_sheets:
+    for si, src_sheet in enumerate(level2_sheets, 1):
+        if on_progress:
+            on_progress(f"  [{si}/{total}] Processing sheet: {src_sheet.name}")
         merger = MergeResolver.from_db(session, src_sheet.id)
 
         ip_names = (
@@ -349,6 +354,8 @@ def split_regmap_from_db(
             ip_sheets.append(ip_sheet.id)
 
         out_path = output_dir / f"{src_sheet.name}.xlsx"
+        if on_progress:
+            on_progress(f"  [{si}/{total}] Writing {src_sheet.name}.xlsx ({len(ip_sheets)} IPs)")
         _export_multi_sheet(session, ip_sheets, out_path)
         results[src_sheet.name] = out_path
 
@@ -373,6 +380,7 @@ def _copy_cell_style(src, dst) -> None:
 def merge_split_files(
     input_dir: Path,
     output_path: Path,
+    on_progress: Callable[[str], None] | None = None,
 ) -> dict[str, list[str]]:
     """Merge split xlsx files back into a single xlsx.
 
@@ -401,9 +409,12 @@ def merge_split_files(
     wb_out.remove(wb_out.active)
 
     result: dict[str, list[str]] = {}
+    total = len(split_files)
 
-    for split_file in split_files:
+    for fi, split_file in enumerate(split_files, 1):
         source_sheet_name = split_file.stem
+        if on_progress:
+            on_progress(f"  [{fi}/{total}] Merging: {split_file.name}")
         ws_out = wb_out.create_sheet(title=source_sheet_name)
 
         split_wb = openpyxl.load_workbook(split_file)

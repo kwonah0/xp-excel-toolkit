@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from sqlalchemy import Text, create_engine
 from sqlalchemy.orm import (
@@ -182,6 +183,7 @@ def _load_memmap(session: Session) -> dict[tuple, MemoryMapEntry]:
 def diff_databases(
     db_path_a: Path,
     db_path_b: Path,
+    on_progress: Callable[[str], None] | None = None,
 ) -> DiffResult:
     """Compare two SQLite databases and return differences.
 
@@ -192,15 +194,27 @@ def diff_databases(
     Returns:
         DiffResult with added, removed, and changed items.
     """
+    if on_progress:
+        on_progress(f"Loading DB: {db_path_a.name}")
     SessionA = init_db(f"sqlite:///{db_path_a}")
+    if on_progress:
+        on_progress(f"Loading DB: {db_path_b.name}")
     SessionB = init_db(f"sqlite:///{db_path_b}")
 
     result = DiffResult()
 
     with SessionA() as sa, SessionB() as sb:
         # --- Register diff ---
+        if on_progress:
+            on_progress("Loading registers from old DB...")
         regs_a = _load_registers(sa)
+        if on_progress:
+            on_progress(f"  {len(regs_a)} registers loaded")
+            on_progress("Loading registers from new DB...")
         regs_b = _load_registers(sb)
+        if on_progress:
+            on_progress(f"  {len(regs_b)} registers loaded")
+            on_progress("Comparing registers...")
 
         keys_a = set(regs_a.keys())
         keys_b = set(regs_b.keys())
@@ -239,6 +253,8 @@ def diff_databases(
                 ))
 
         # --- MemoryMap diff ---
+        if on_progress:
+            on_progress("Comparing memory map...")
         mm_a = _load_memmap(sa)
         mm_b = _load_memmap(sb)
 
@@ -367,17 +383,21 @@ def save_diff_to_db(
 def diff_with_auto_import(
     path_a: Path,
     path_b: Path,
+    on_progress: Callable[[str], None] | None = None,
 ) -> DiffResult:
     """Diff two paths that can be .db or .xlsx files.
 
     If an xlsx is given, it is imported into a temp DB first.
     """
-    db_a = _resolve_db(path_a)
-    db_b = _resolve_db(path_b)
-    return diff_databases(db_a, db_b)
+    db_a = _resolve_db(path_a, on_progress=on_progress)
+    db_b = _resolve_db(path_b, on_progress=on_progress)
+    return diff_databases(db_a, db_b, on_progress=on_progress)
 
 
-def _resolve_db(path: Path) -> Path:
+def _resolve_db(
+    path: Path,
+    on_progress: Callable[[str], None] | None = None,
+) -> Path:
     """If path is .xlsx, import to temp DB and return DB path.
     If .db, return as-is.
     """
@@ -388,13 +408,17 @@ def _resolve_db(path: Path) -> Path:
         # Check if a companion .db already exists
         companion_db = path.with_suffix(".db")
         if companion_db.exists():
+            if on_progress:
+                on_progress(f"Reusing existing DB: {companion_db.name}")
             return companion_db
 
         # Import into a new DB next to the xlsx
+        if on_progress:
+            on_progress(f"Auto-importing {path.name} into DB...")
         from dsm.xlsx_parser import import_xlsx
         Session = init_db(f"sqlite:///{companion_db}")
         with Session() as session:
-            import_xlsx(session, path)
+            import_xlsx(session, path, on_progress=on_progress)
             session.commit()
         return companion_db
 
