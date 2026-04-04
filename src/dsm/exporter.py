@@ -6,7 +6,7 @@ import io
 from pathlib import Path
 
 import openpyxl
-from openpyxl.cell.cell import MergedCell
+from openpyxl.cell.cell import Cell, MergedCell
 from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -84,7 +84,7 @@ def export_regmap_xlsx(
     return output_path
 
 
-def _apply_style(cell, style: dict | None):
+def _apply_style(cell: Cell, style: dict | None) -> None:
     """Apply style dict from ExcelCell to an openpyxl cell."""
     if not style:
         return

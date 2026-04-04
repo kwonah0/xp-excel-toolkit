@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import fnmatch
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import openpyxl
 from openpyxl.cell.cell import Cell
+from openpyxl.worksheet.worksheet import Worksheet
 from sqlalchemy import insert
 from sqlalchemy.orm import Session
 
@@ -80,7 +82,7 @@ def extract_style(cell: Cell) -> dict | None:
 
 
 def find_header_row(
-    ws,
+    ws: Worksheet,
     field_map: dict[str, str] | None = None,
     min_cols: int = 3,
 ) -> int | None:
@@ -126,7 +128,7 @@ def _match_config(
 
 def _import_ws(
     session: Session,
-    ws,
+    ws: Worksheet,
     wb_id: int,
     *,
     header_row: int | None = None,

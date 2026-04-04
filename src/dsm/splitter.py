@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import openpyxl
+from openpyxl.cell.cell import Cell
 from sqlalchemy import distinct, insert
 from sqlalchemy.orm import Session
 
@@ -365,7 +366,7 @@ def split_regmap_from_db(
 # -- merge split files back ---------------------------------------------------
 
 
-def _copy_cell_style(src, dst) -> None:
+def _copy_cell_style(src: Cell, dst: Cell) -> None:
     """Copy openpyxl cell style attributes from src to dst."""
     from copy import copy
 

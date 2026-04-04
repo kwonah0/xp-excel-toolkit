@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import io
 import multiprocessing as mp
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import openpyxl
 from openpyxl.cell.cell import MergedCell
 from openpyxl.comments import Comment
+from openpyxl.worksheet.worksheet import Worksheet
 
 from dsm.domain_models import REGMAP_FIELD_MAP, Register
 from dsm.models import ExcelSheet, ExcelWorkbook, init_db
@@ -41,7 +43,7 @@ class PatchResult:
     patched_path: Path | None = None
 
 
-def _norm(val) -> str | None:
+def _norm(val: Any) -> str | None:
     """Normalise a cell value to str for comparison."""
     if val is None:
         return None
@@ -49,7 +51,7 @@ def _norm(val) -> str | None:
     return s if s else None
 
 
-def _resolve_merged_value(ws, row: int, col: int):
+def _resolve_merged_value(ws: Worksheet, row: int, col: int) -> Any:
     """Read value from a possibly-merged cell in an openpyxl worksheet."""
     cell = ws.cell(row=row, column=col)
     if isinstance(cell, MergedCell):

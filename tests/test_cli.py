@@ -226,6 +226,278 @@ class TestDiff:
 
         assert result.exit_code == 0, result.output
 
+    def test_diff_cells(self, runner, work_dir):
+        """Test cell-level diff with --cells flag."""
+        xlsx = work_dir / "regmap_sample.xlsx"
+        db_a = work_dir / "ca.db"
+        db_b = work_dir / "cb.db"
+
+        runner.invoke(main, ["import", str(xlsx), "--db", str(db_a)])
+        shutil.copy(db_a, db_b)
+
+        # Modify an ExcelCell in db_b so cell-level diff detects it
+        from dsm.models import ExcelCell as EC, init_db
+        Session = init_db(f"sqlite:///{db_b}")
+        with Session() as session:
+            cell = session.query(EC).filter(EC.raw_value.isnot(None)).first()
+            cell.raw_value = "__CHANGED__"
+            session.commit()
+
+        result = runner.invoke(main, [
+            "diff", str(db_a), str(db_b),
+            "--cells",
+            "--db", str(work_dir / "diff_cells.db"),
+        ])
+
+        assert result.exit_code == 0, result.output
+        assert "Cells" in result.output or "cell diffs" in result.output
+        assert (work_dir / "diff_cells.db").exists()
+
+        # Verify diff_cell table has rows
+        from dsm.diff import init_diff_db, DiffCell
+        DiffSession = init_diff_db(f"sqlite:///{work_dir / 'diff_cells.db'}")
+        with DiffSession() as session:
+            count = session.query(DiffCell).count()
+            assert count > 0
+
+    def test_diff_cells_identical(self, runner, work_dir):
+        """Cell diff of identical DBs should have no cell diffs."""
+        xlsx = work_dir / "regmap_sample.xlsx"
+        db = work_dir / "same2.db"
+        runner.invoke(main, ["import", str(xlsx), "--db", str(db)])
+
+        result = runner.invoke(main, [
+            "diff", str(db), str(db),
+            "--cells",
+            "--db", str(work_dir / "diff_same_cells.db"),
+        ])
+
+        assert result.exit_code == 0, result.output
+        assert "No differences found" in result.output
+
+    def test_diff_cells_style(self, runner, work_dir):
+        """Test --style flag detects style changes."""
+        xlsx = work_dir / "regmap_sample.xlsx"
+        db_a = work_dir / "sa.db"
+        db_b = work_dir / "sb.db"
+
+        runner.invoke(main, ["import", str(xlsx), "--db", str(db_a)])
+        shutil.copy(db_a, db_b)
+
+        # Modify style in db_b
+        from dsm.models import ExcelCell as EC, init_db
+        Session = init_db(f"sqlite:///{db_b}")
+        with Session() as session:
+            cell = session.query(EC).filter(EC.style.isnot(None)).first()
+            if cell:
+                cell.style = {"bg_color": "FF0000"}
+                session.commit()
+
+        result = runner.invoke(main, [
+            "diff", str(db_a), str(db_b),
+            "--cells", "--style",
+            "--db", str(work_dir / "diff_style.db"),
+        ])
+
+        assert result.exit_code == 0, result.output
+        # --style implies --cells, so should detect the style change
+        assert (work_dir / "diff_style.db").exists()
+
+    def test_diff_style_implies_cells(self, runner, work_dir):
+        """--style flag should imply --cells."""
+        xlsx = work_dir / "regmap_sample.xlsx"
+        db = work_dir / "impl.db"
+        runner.invoke(main, ["import", str(xlsx), "--db", str(db)])
+
+        result = runner.invoke(main, [
+            "diff", str(db), str(db),
+            "--style",
+            "--db", str(work_dir / "diff_impl.db"),
+        ])
+
+        assert result.exit_code == 0, result.output
+        # Should work without explicit --cells
+        assert "No differences found" in result.output
+
+    def test_diff_cells_comment(self, runner, work_dir):
+        """--comment flag detects comment-only changes."""
+        xlsx = work_dir / "regmap_sample.xlsx"
+        db_a = work_dir / "cma.db"
+        db_b = work_dir / "cmb.db"
+
+        runner.invoke(main, ["import", str(xlsx), "--db", str(db_a)])
+        shutil.copy(db_a, db_b)
+
+        # Modify a comment in db_b
+        from dsm.models import ExcelCell as EC, init_db
+        Session = init_db(f"sqlite:///{db_b}")
+        with Session() as session:
+            cell = session.query(EC).filter(EC.raw_value.isnot(None)).first()
+            cell.comment = "NEW_COMMENT"
+            session.commit()
+
+        # Without --comment: should NOT detect comment-only change
+        result = runner.invoke(main, [
+            "diff", str(db_a), str(db_b),
+            "--cells",
+            "--db", str(work_dir / "diff_no_comment.db"),
+        ])
+        assert result.exit_code == 0, result.output
+        assert "No differences found" in result.output
+
+        # With --comment: should detect comment change
+        result = runner.invoke(main, [
+            "diff", str(db_a), str(db_b),
+            "--comment",
+            "--db", str(work_dir / "diff_comment.db"),
+        ])
+        assert result.exit_code == 0, result.output
+        assert "Cells" in result.output or "cell diffs" in result.output
+
+    def test_diff_all_flag(self, runner, work_dir):
+        """--all flag enables all comparisons and implies --cells."""
+        xlsx = work_dir / "regmap_sample.xlsx"
+        db = work_dir / "all.db"
+        runner.invoke(main, ["import", str(xlsx), "--db", str(db)])
+
+        result = runner.invoke(main, [
+            "diff", str(db), str(db),
+            "--all",
+            "--db", str(work_dir / "diff_all.db"),
+        ])
+
+        assert result.exit_code == 0, result.output
+        assert "No differences found" in result.output
+
+    def test_diff_smart_identical(self, runner, work_dir):
+        """Smart diff of identical DBs should find no differences."""
+        xlsx = work_dir / "regmap_sample.xlsx"
+        db = work_dir / "smart_same.db"
+        runner.invoke(main, ["import", str(xlsx), "--db", str(db)])
+
+        result = runner.invoke(main, [
+            "diff", str(db), str(db),
+            "--smart",
+            "--db", str(work_dir / "diff_smart_same.db"),
+        ])
+
+        assert result.exit_code == 0, result.output
+        assert "No differences found" in result.output
+
+    def test_diff_smart_row_insert(self, runner, work_dir):
+        """Smart diff correctly identifies row insertion without cascade."""
+        xlsx = work_dir / "regmap_sample.xlsx"
+        db_a = work_dir / "smart_a.db"
+        db_b = work_dir / "smart_b.db"
+
+        runner.invoke(main, ["import", str(xlsx), "--db", str(db_a)])
+        import shutil as _sh
+        _sh.copy(db_a, db_b)
+
+        # Insert a new row in db_b by shifting existing cells down
+        # and adding a new row with distinct content
+        import sqlite3
+        conn = sqlite3.connect(str(db_b))
+        cur = conn.cursor()
+
+        # Find first sheet_id
+        sheet_id = cur.execute(
+            "SELECT id FROM excel_sheet LIMIT 1"
+        ).fetchone()[0]
+
+        # Count cells to verify we have enough data
+        cell_count = cur.execute(
+            "SELECT COUNT(*) FROM excel_cell WHERE sheet_id = ?", (sheet_id,)
+        ).fetchone()[0]
+        if cell_count < 5:
+            conn.close()
+            pytest.skip("Not enough cells in sample")
+
+        # Get max col at row 3 (before shifting)
+        max_col = cur.execute(
+            "SELECT MAX(col) FROM excel_cell WHERE sheet_id = ? AND row = 3",
+            (sheet_id,)
+        ).fetchone()[0] or 5
+
+        # Shift rows >= 3 down by 1 (two-step to avoid unique constraint)
+        cur.execute(
+            "UPDATE excel_cell SET row = row + 10000 "
+            "WHERE sheet_id = ? AND row >= 3",
+            (sheet_id,),
+        )
+        cur.execute(
+            "UPDATE excel_cell SET row = row - 9999 "
+            "WHERE sheet_id = ? AND row >= 10000",
+            (sheet_id,),
+        )
+
+        # Insert new row 3 with unique content
+        for col in range(1, max_col + 1):
+            cur.execute(
+                "INSERT INTO excel_cell (sheet_id, row, col, raw_value, is_merge_origin) "
+                "VALUES (?, 3, ?, ?, 0)",
+                (sheet_id, col, f"INSERTED_COL{col}"),
+            )
+        conn.commit()
+        conn.close()
+
+        # Positional diff: should show many changes (cascade)
+        result_pos = runner.invoke(main, [
+            "diff", str(db_a), str(db_b),
+            "--cells",
+            "--db", str(work_dir / "diff_pos.db"),
+        ])
+        assert result_pos.exit_code == 0, result_pos.output
+
+        # Smart diff: should show fewer changes (only the inserted row)
+        result_smart = runner.invoke(main, [
+            "diff", str(db_a), str(db_b),
+            "--smart",
+            "--db", str(work_dir / "diff_smart.db"),
+        ])
+        assert result_smart.exit_code == 0, result_smart.output
+        assert "smart" in result_smart.output.lower() or "Cells" in result_smart.output
+
+        # Verify smart diff has fewer diffs than positional
+        from dsm.diff import init_diff_db, DiffCell
+        PosSession = init_diff_db(f"sqlite:///{work_dir / 'diff_pos.db'}")
+        SmartSession = init_diff_db(f"sqlite:///{work_dir / 'diff_smart.db'}")
+        with PosSession() as sp, SmartSession() as ss:
+            pos_count = sp.query(DiffCell).count()
+            smart_count = ss.query(DiffCell).count()
+            # Smart should have significantly fewer diffs
+            assert smart_count < pos_count, (
+                f"Smart diff ({smart_count}) should have fewer diffs "
+                f"than positional ({pos_count})"
+            )
+
+    def test_diff_smart_cell_modification(self, runner, work_dir):
+        """Smart diff detects cell modifications within matched rows."""
+        xlsx = work_dir / "regmap_sample.xlsx"
+        db_a = work_dir / "smod_a.db"
+        db_b = work_dir / "smod_b.db"
+
+        runner.invoke(main, ["import", str(xlsx), "--db", str(db_a)])
+        import shutil as _sh
+        _sh.copy(db_a, db_b)
+
+        # Modify a single cell value in db_b
+        from dsm.models import ExcelCell as EC, init_db
+        Session = init_db(f"sqlite:///{db_b}")
+        with Session() as session:
+            cell = session.query(EC).filter(EC.raw_value.isnot(None)).first()
+            cell.raw_value = "__SMART_MODIFIED__"
+            session.commit()
+
+        result = runner.invoke(main, [
+            "diff", str(db_a), str(db_b),
+            "--smart",
+            "--db", str(work_dir / "diff_smart_mod.db"),
+        ])
+
+        assert result.exit_code == 0, result.output
+        assert "Changed" in result.output or "cell diffs" in result.output
+
 
 # ── dsm merge (stack) ─────────────────────────────────────────────────
 

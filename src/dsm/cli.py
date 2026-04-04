@@ -271,44 +271,125 @@ def memmap(db_path: Path):
               help="Show detailed bit-field info for added registers")
 @click.option("--json", "as_json", is_flag=True, default=False,
               help="Output as JSON")
-def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool, as_json: bool):
+@click.option("--cells", is_flag=True, default=False,
+              help="Include cell-level diff (compares raw_value only by default)")
+@click.option("--comment", "compare_comment", is_flag=True, default=False,
+              help="Compare cell comments (implies --cells)")
+@click.option("--style", "compare_style", is_flag=True, default=False,
+              help="Compare cell styles (implies --cells)")
+@click.option("--merge-info", "compare_merge", is_flag=True, default=False,
+              help="Compare merged cell ranges (implies --cells)")
+@click.option("--all", "compare_all", is_flag=True, default=False,
+              help="Enable all cell comparisons (cells + comment + style + merge)")
+@click.option("--smart", is_flag=True, default=False,
+              help="Use sequence-based smart diff (handles row insert/delete without cascade)")
+def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
+         as_json: bool, cells: bool, compare_comment: bool, compare_style: bool,
+         compare_merge: bool, compare_all: bool, smart: bool):
     """Compare two register map DBs or xlsx files.
 
     Accepts .db or .xlsx paths. If xlsx is given, auto-imports to DB first.
     Use --db to save results into a queryable SQLite DB.
+    Use --cells to include cell-level comparison (raw_value only).
+    Add --comment, --style, --merge-info for deeper comparison (each implies --cells).
+    Use --all to enable all comparisons at once.
+    Use --smart for sequence-based diff that handles row insert/delete correctly.
 
     \b
     Examples:
       dsm diff old.db new.db
-      dsm diff old.db new.db --db diff_result.db
-      dsm diff old.xlsx new.xlsx -v
+      dsm diff old.db new.db --cells
+      dsm diff old.db new.db --cells --smart
+      dsm diff old.db new.db --all --smart
     """
     from dsm.diff import diff_with_auto_import, format_diff, save_diff_to_db
 
+    # --all enables everything
+    if compare_all:
+        cells = True
+        compare_comment = True
+        compare_style = True
+        compare_merge = True
+
+    # --comment, --style, --merge-info each implies --cells
+    if compare_comment or compare_style or compare_merge:
+        cells = True
+
+    # --smart implies --cells
+    if smart:
+        cells = True
+
     t0 = time.perf_counter()
-    result = diff_with_auto_import(path_a, path_b, on_progress=click.echo)
+    result = diff_with_auto_import(path_a, path_b, on_progress=click.echo,
+                                    include_cells=cells,
+                                    compare_comment=compare_comment,
+                                    compare_style=compare_style,
+                                    compare_merge=compare_merge,
+                                    smart=smart)
     elapsed = time.perf_counter() - t0
 
     if as_json:
         import json
+        from dsm.diff import _REG_FIELDS, _MEMMAP_FIELDS, _reg_changes, _mm_changes
+
+        def _reg_to_json(r, side: str) -> dict:
+            return {f: getattr(r, f"{side}_{f}") for f in _REG_FIELDS}
+
+        def _mm_to_json(m, side: str) -> dict:
+            return {f: getattr(m, f"{side}_{f}") for f in _MEMMAP_FIELDS}
+
         data = {
-            "added_registers": result.added_regs,
-            "removed_registers": result.removed_regs,
+            "added_registers": [
+                {"sheet": r.sheet, **_reg_to_json(r, "new")}
+                for r in result._filter_regs("added")
+            ],
+            "removed_registers": [
+                {"sheet": r.sheet, **_reg_to_json(r, "old")}
+                for r in result._filter_regs("removed")
+            ],
             "changed_registers": [
                 {
-                    "sheet": rd.sheet, "ip": rd.ip,
-                    "indx": rd.indx, "page": rd.page, "para": rd.para,
+                    "sheet": dr.sheet, "ip": dr.new_name,
+                    "indx": dr.new_indx, "page": dr.new_page, "para": dr.new_para,
                     "changes": [
-                        {"field": c.field, "old": c.old, "new": c.new}
-                        for c in rd.changes
+                        {"field": f, "old": old, "new": new}
+                        for f, old, new in _reg_changes(dr)
                     ],
                 }
-                for rd in result.changed_regs
+                for dr in result._filter_regs("changed")
             ],
-            "added_memmap": result.added_memmap,
-            "removed_memmap": result.removed_memmap,
-            "changed_memmap": result.changed_memmap,
+            "added_memmap": [_mm_to_json(m, "new") for m in result._filter_mm("added")],
+            "removed_memmap": [_mm_to_json(m, "old") for m in result._filter_mm("removed")],
+            "changed_memmap": [
+                {
+                    **_mm_to_json(dm, "old"),
+                    "changes": {
+                        f: {"old": old, "new": new}
+                        for f, old, new in _mm_changes(dm)
+                    },
+                }
+                for dm in result._filter_mm("changed")
+            ],
         }
+        if cells:
+            cell_list = []
+            for cd in result.cells:
+                entry = {
+                    "sheet": cd.sheet, "row": cd.row, "col": cd.col,
+                    "status": cd.status,
+                    "old_value": cd.old_value, "new_value": cd.new_value,
+                }
+                if compare_comment:
+                    entry["old_comment"] = cd.old_comment
+                    entry["new_comment"] = cd.new_comment
+                if compare_style:
+                    entry["old_style"] = cd.old_style
+                    entry["new_style"] = cd.new_style
+                if compare_merge:
+                    entry["old_merge_range"] = cd.old_merge_range
+                    entry["new_merge_range"] = cd.new_merge_range
+                cell_list.append(entry)
+            data["cell_diffs"] = cell_list
         click.echo(json.dumps(data, indent=2, ensure_ascii=False))
     else:
         click.echo(format_diff(result, verbose=verbose))

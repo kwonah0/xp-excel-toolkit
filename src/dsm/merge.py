@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from openpyxl.worksheet.worksheet import Worksheet
     from sqlalchemy.orm import Session
 
 
@@ -16,7 +17,7 @@ class MergeResolver:
       - MergeResolver.from_db(...)  — from ExcelMerge + ExcelCell records (post-import)
     """
 
-    def __init__(self, ws):
+    def __init__(self, ws: Worksheet) -> None:
         self._merge_map: dict[tuple[int, int], tuple[int, int]] = {}
         self._origin_values: dict[tuple[int, int], str | None] = {}
         self.ranges = list(ws.merged_cells.ranges)
