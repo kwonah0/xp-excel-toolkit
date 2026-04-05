@@ -203,6 +203,7 @@ class TestDiff:
         return db_a, db_b
 
     def test_diff_two_dbs(self, runner, work_dir):
+        """Default diff (cells) detects domain model changes at cell level."""
         db_a, db_b = self._make_two_dbs(runner, work_dir)
 
         result = runner.invoke(main, [
@@ -225,9 +226,23 @@ class TestDiff:
         ])
 
         assert result.exit_code == 0, result.output
+        assert "No differences found" in result.output
 
-    def test_diff_cells(self, runner, work_dir):
-        """Test cell-level diff with --cells flag."""
+    def test_diff_domain(self, runner, work_dir):
+        """--domain flag enables domain-level diff."""
+        db_a, db_b = self._make_two_dbs(runner, work_dir)
+
+        result = runner.invoke(main, [
+            "diff", str(db_a), str(db_b),
+            "--domain",
+            "--db", str(work_dir / "diff_domain.db"),
+        ])
+
+        assert result.exit_code == 0, result.output
+        assert "Registers" in result.output or "Changed" in result.output
+
+    def test_diff_cells_default(self, runner, work_dir):
+        """Default diff includes cell-level comparison."""
         xlsx = work_dir / "regmap_sample.xlsx"
         db_a = work_dir / "ca.db"
         db_b = work_dir / "cb.db"
@@ -245,7 +260,6 @@ class TestDiff:
 
         result = runner.invoke(main, [
             "diff", str(db_a), str(db_b),
-            "--cells",
             "--db", str(work_dir / "diff_cells.db"),
         ])
 
@@ -259,21 +273,6 @@ class TestDiff:
         with DiffSession() as session:
             count = session.query(DiffCell).count()
             assert count > 0
-
-    def test_diff_cells_identical(self, runner, work_dir):
-        """Cell diff of identical DBs should have no cell diffs."""
-        xlsx = work_dir / "regmap_sample.xlsx"
-        db = work_dir / "same2.db"
-        runner.invoke(main, ["import", str(xlsx), "--db", str(db)])
-
-        result = runner.invoke(main, [
-            "diff", str(db), str(db),
-            "--cells",
-            "--db", str(work_dir / "diff_same_cells.db"),
-        ])
-
-        assert result.exit_code == 0, result.output
-        assert "No differences found" in result.output
 
     def test_diff_cells_style(self, runner, work_dir):
         """Test --style flag detects style changes."""
@@ -295,29 +294,12 @@ class TestDiff:
 
         result = runner.invoke(main, [
             "diff", str(db_a), str(db_b),
-            "--cells", "--style",
+            "--style",
             "--db", str(work_dir / "diff_style.db"),
         ])
 
         assert result.exit_code == 0, result.output
-        # --style implies --cells, so should detect the style change
         assert (work_dir / "diff_style.db").exists()
-
-    def test_diff_style_implies_cells(self, runner, work_dir):
-        """--style flag should imply --cells."""
-        xlsx = work_dir / "regmap_sample.xlsx"
-        db = work_dir / "impl.db"
-        runner.invoke(main, ["import", str(xlsx), "--db", str(db)])
-
-        result = runner.invoke(main, [
-            "diff", str(db), str(db),
-            "--style",
-            "--db", str(work_dir / "diff_impl.db"),
-        ])
-
-        assert result.exit_code == 0, result.output
-        # Should work without explicit --cells
-        assert "No differences found" in result.output
 
     def test_diff_cells_comment(self, runner, work_dir):
         """--comment flag detects comment-only changes."""
@@ -339,7 +321,6 @@ class TestDiff:
         # Without --comment: should NOT detect comment-only change
         result = runner.invoke(main, [
             "diff", str(db_a), str(db_b),
-            "--cells",
             "--db", str(work_dir / "diff_no_comment.db"),
         ])
         assert result.exit_code == 0, result.output
@@ -355,7 +336,7 @@ class TestDiff:
         assert "Cells" in result.output or "cell diffs" in result.output
 
     def test_diff_all_flag(self, runner, work_dir):
-        """--all flag enables all comparisons and implies --cells."""
+        """--all flag enables all comparisons (cells + domain + comment + style + merge)."""
         xlsx = work_dir / "regmap_sample.xlsx"
         db = work_dir / "all.db"
         runner.invoke(main, ["import", str(xlsx), "--db", str(db)])
@@ -369,20 +350,18 @@ class TestDiff:
         assert result.exit_code == 0, result.output
         assert "No differences found" in result.output
 
-    def test_diff_smart_identical(self, runner, work_dir):
-        """Smart diff of identical DBs should find no differences."""
-        xlsx = work_dir / "regmap_sample.xlsx"
-        db = work_dir / "smart_same.db"
-        runner.invoke(main, ["import", str(xlsx), "--db", str(db)])
+    def test_diff_no_cells(self, runner, work_dir):
+        """--no-cells with --domain gives domain-only diff."""
+        db_a, db_b = self._make_two_dbs(runner, work_dir)
 
         result = runner.invoke(main, [
-            "diff", str(db), str(db),
-            "--cells",
-            "--db", str(work_dir / "diff_smart_same.db"),
+            "diff", str(db_a), str(db_b),
+            "--domain", "--no-cells",
+            "--db", str(work_dir / "diff_domain_only.db"),
         ])
 
         assert result.exit_code == 0, result.output
-        assert "No differences found" in result.output
+        assert "Registers" in result.output or "Changed" in result.output
 
     def test_diff_smart_row_insert(self, runner, work_dir):
         """Smart diff correctly identifies row insertion without cascade."""
@@ -444,15 +423,14 @@ class TestDiff:
         # Positional diff: should show many changes (cascade)
         result_pos = runner.invoke(main, [
             "diff", str(db_a), str(db_b),
-            "--cells", "--positional",
+            "--positional",
             "--db", str(work_dir / "diff_pos.db"),
         ])
         assert result_pos.exit_code == 0, result_pos.output
 
-        # Smart diff: should show fewer changes (only the inserted row)
+        # Smart diff (default): should show fewer changes (only the inserted row)
         result_smart = runner.invoke(main, [
             "diff", str(db_a), str(db_b),
-            "--cells",
             "--db", str(work_dir / "diff_smart.db"),
         ])
         assert result_smart.exit_code == 0, result_smart.output
@@ -491,7 +469,6 @@ class TestDiff:
 
         result = runner.invoke(main, [
             "diff", str(db_a), str(db_b),
-            "--cells",
             "--db", str(work_dir / "diff_smart_mod.db"),
         ])
 

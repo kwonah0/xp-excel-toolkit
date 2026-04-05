@@ -468,17 +468,20 @@ def diff_databases(
     db_path_a: Path,
     db_path_b: Path,
     on_progress: Callable[[str], None] | None = None,
-    include_cells: bool = False,
+    include_cells: bool = True,
+    include_domain: bool = False,
     compare_comment: bool = False,
     compare_style: bool = False,
     compare_merge: bool = False,
-    smart: bool = False,
+    smart: bool = True,
 ) -> DiffResult:
     """Compare two SQLite databases and return differences.
 
     Args:
         db_path_a: Path to the "old" / base database.
         db_path_b: Path to the "new" / target database.
+        include_cells: Include cell-level diff (default True).
+        include_domain: Include domain-level diff — Register and MemoryMap (default False).
 
     Returns:
         DiffResult with added, removed, and changed items.
@@ -492,88 +495,89 @@ def diff_databases(
 
     result = DiffResult()
 
+    def _sort_key(k: tuple) -> tuple:
+        return tuple(v if v is not None else "" for v in k)
+
     with SessionA() as sa, SessionB() as sb:
-        # --- Register diff ---
-        if on_progress:
-            on_progress("Loading registers from old DB...")
-        regs_a = _load_registers(sa)
-        if on_progress:
-            on_progress(f"  {len(regs_a)} registers loaded")
-            on_progress("Loading registers from new DB...")
-        regs_b = _load_registers(sb)
-        if on_progress:
-            on_progress(f"  {len(regs_b)} registers loaded")
-            on_progress("Comparing registers...")
+        # --- Domain-level diff (optional) ---
+        if include_domain:
+            if on_progress:
+                on_progress("Loading registers from old DB...")
+            regs_a = _load_registers(sa)
+            if on_progress:
+                on_progress(f"  {len(regs_a)} registers loaded")
+                on_progress("Loading registers from new DB...")
+            regs_b = _load_registers(sb)
+            if on_progress:
+                on_progress(f"  {len(regs_b)} registers loaded")
+                on_progress("Comparing registers...")
 
-        keys_a = set(regs_a.keys())
-        keys_b = set(regs_b.keys())
+            keys_a = set(regs_a.keys())
+            keys_b = set(regs_b.keys())
 
-        def _sort_key(k: tuple) -> tuple:
-            return tuple(v if v is not None else "" for v in k)
+            def _make_diff_reg(status: str, sheet: str,
+                               old: Register | None, new: Register | None) -> DiffRegister:
+                dr = DiffRegister(status=status, sheet=sheet)
+                for f in _REG_FIELDS:
+                    setattr(dr, f"old_{f}", getattr(old, f) if old else None)
+                    setattr(dr, f"new_{f}", getattr(new, f) if new else None)
+                return dr
 
-        def _make_diff_reg(status: str, sheet: str,
-                           old: Register | None, new: Register | None) -> DiffRegister:
-            dr = DiffRegister(status=status, sheet=sheet)
-            for f in _REG_FIELDS:
-                setattr(dr, f"old_{f}", getattr(old, f) if old else None)
-                setattr(dr, f"new_{f}", getattr(new, f) if new else None)
-            return dr
+            # Added
+            for key in sorted(keys_b - keys_a, key=_sort_key):
+                sn, reg = regs_b[key]
+                result.registers.append(_make_diff_reg("added", sn, None, reg))
 
-        # Added
-        for key in sorted(keys_b - keys_a, key=_sort_key):
-            sn, reg = regs_b[key]
-            result.registers.append(_make_diff_reg("added", sn, None, reg))
+            # Removed
+            for key in sorted(keys_a - keys_b, key=_sort_key):
+                sn, reg = regs_a[key]
+                result.registers.append(_make_diff_reg("removed", sn, reg, None))
 
-        # Removed
-        for key in sorted(keys_a - keys_b, key=_sort_key):
-            sn, reg = regs_a[key]
-            result.registers.append(_make_diff_reg("removed", sn, reg, None))
-
-        # Changed
-        for key in sorted(keys_a & keys_b, key=_sort_key):
-            sn_a, reg_a = regs_a[key]
-            _sn_b, reg_b = regs_b[key]
-            has_change = any(
-                getattr(reg_a, f) != getattr(reg_b, f) for f in _REG_FIELDS
-            )
-            if has_change:
-                result.registers.append(
-                    _make_diff_reg("changed", sn_a, reg_a, reg_b)
+            # Changed
+            for key in sorted(keys_a & keys_b, key=_sort_key):
+                sn_a, reg_a = regs_a[key]
+                _sn_b, reg_b = regs_b[key]
+                has_change = any(
+                    getattr(reg_a, f) != getattr(reg_b, f) for f in _REG_FIELDS
                 )
+                if has_change:
+                    result.registers.append(
+                        _make_diff_reg("changed", sn_a, reg_a, reg_b)
+                    )
 
-        # --- MemoryMap diff ---
-        if on_progress:
-            on_progress("Comparing memory map...")
-        mm_a = _load_memmap(sa)
-        mm_b = _load_memmap(sb)
+            # --- MemoryMap diff ---
+            if on_progress:
+                on_progress("Comparing memory map...")
+            mm_a = _load_memmap(sa)
+            mm_b = _load_memmap(sb)
 
-        mkeys_a = set(mm_a.keys())
-        mkeys_b = set(mm_b.keys())
+            mkeys_a = set(mm_a.keys())
+            mkeys_b = set(mm_b.keys())
 
-        def _make_diff_mm(status: str,
-                          old: MemoryMapEntry | None,
-                          new: MemoryMapEntry | None) -> DiffMemmap:
-            dm = DiffMemmap(status=status)
-            for f in _MEMMAP_FIELDS:
-                setattr(dm, f"old_{f}", getattr(old, f) if old else None)
-                setattr(dm, f"new_{f}", getattr(new, f) if new else None)
-            return dm
+            def _make_diff_mm(status: str,
+                              old: MemoryMapEntry | None,
+                              new: MemoryMapEntry | None) -> DiffMemmap:
+                dm = DiffMemmap(status=status)
+                for f in _MEMMAP_FIELDS:
+                    setattr(dm, f"old_{f}", getattr(old, f) if old else None)
+                    setattr(dm, f"new_{f}", getattr(new, f) if new else None)
+                return dm
 
-        for key in sorted(mkeys_b - mkeys_a, key=_sort_key):
-            result.memmap.append(_make_diff_mm("added", None, mm_b[key]))
+            for key in sorted(mkeys_b - mkeys_a, key=_sort_key):
+                result.memmap.append(_make_diff_mm("added", None, mm_b[key]))
 
-        for key in sorted(mkeys_a - mkeys_b, key=_sort_key):
-            result.memmap.append(_make_diff_mm("removed", mm_a[key], None))
+            for key in sorted(mkeys_a - mkeys_b, key=_sort_key):
+                result.memmap.append(_make_diff_mm("removed", mm_a[key], None))
 
-        for key in sorted(mkeys_a & mkeys_b, key=_sort_key):
-            ea, eb = mm_a[key], mm_b[key]
-            has_change = any(
-                getattr(ea, f) != getattr(eb, f) for f in _MEMMAP_FIELDS
-            )
-            if has_change:
-                result.memmap.append(_make_diff_mm("changed", ea, eb))
+            for key in sorted(mkeys_a & mkeys_b, key=_sort_key):
+                ea, eb = mm_a[key], mm_b[key]
+                has_change = any(
+                    getattr(ea, f) != getattr(eb, f) for f in _MEMMAP_FIELDS
+                )
+                if has_change:
+                    result.memmap.append(_make_diff_mm("changed", ea, eb))
 
-        # --- Cell-level diff ---
+        # --- Cell-level diff (default) ---
         if include_cells:
             # Load merge ranges if needed
             merges_a: dict[int, str] = {}
@@ -760,11 +764,12 @@ def diff_with_auto_import(
     path_a: Path,
     path_b: Path,
     on_progress: Callable[[str], None] | None = None,
-    include_cells: bool = False,
+    include_cells: bool = True,
+    include_domain: bool = False,
     compare_comment: bool = False,
     compare_style: bool = False,
     compare_merge: bool = False,
-    smart: bool = False,
+    smart: bool = True,
 ) -> DiffResult:
     """Diff two paths that can be .db or .xlsx files.
 
@@ -774,6 +779,7 @@ def diff_with_auto_import(
     db_b = _resolve_db(path_b, on_progress=on_progress)
     return diff_databases(db_a, db_b, on_progress=on_progress,
                           include_cells=include_cells,
+                          include_domain=include_domain,
                           compare_comment=compare_comment,
                           compare_style=compare_style,
                           compare_merge=compare_merge,

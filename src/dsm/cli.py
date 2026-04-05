@@ -271,56 +271,58 @@ def memmap(db_path: Path):
               help="Show detailed bit-field info for added registers")
 @click.option("--json", "as_json", is_flag=True, default=False,
               help="Output as JSON")
-@click.option("--cells", is_flag=True, default=False,
-              help="Include cell-level diff (compares raw_value only by default)")
+@click.option("--domain", "include_domain", is_flag=True, default=False,
+              help="Include domain-level diff (Register and MemoryMap models)")
+@click.option("--no-cells", is_flag=True, default=False,
+              help="Disable cell-level diff (use with --domain for domain-only)")
 @click.option("--comment", "compare_comment", is_flag=True, default=False,
-              help="Compare cell comments (implies --cells)")
+              help="Compare cell comments")
 @click.option("--style", "compare_style", is_flag=True, default=False,
-              help="Compare cell styles (implies --cells)")
+              help="Compare cell styles")
 @click.option("--merge-info", "compare_merge", is_flag=True, default=False,
-              help="Compare merged cell ranges (implies --cells)")
+              help="Compare merged cell ranges")
 @click.option("--all", "compare_all", is_flag=True, default=False,
-              help="Enable all cell comparisons (cells + comment + style + merge)")
+              help="Enable all comparisons (cells + domain + comment + style + merge)")
 @click.option("--positional", is_flag=True, default=False,
               help="Use positional diff instead of smart diff (row/col based, may cascade on insert/delete)")
 def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
-         as_json: bool, cells: bool, compare_comment: bool, compare_style: bool,
+         as_json: bool, include_domain: bool, no_cells: bool,
+         compare_comment: bool, compare_style: bool,
          compare_merge: bool, compare_all: bool, positional: bool):
     """Compare two register map DBs or xlsx files.
 
     Accepts .db or .xlsx paths. If xlsx is given, auto-imports to DB first.
-    Uses smart (sequence-based) diff by default for cell comparison.
-    Use --cells to include cell-level comparison (raw_value only).
-    Add --comment, --style, --merge-info for deeper comparison (each implies --cells).
+    By default, compares all cells using smart (sequence-based) diff.
+    Add --domain to include domain-level (Register/MemoryMap) comparison.
+    Add --comment, --style, --merge-info for deeper cell comparison.
     Use --all to enable all comparisons at once.
     Use --positional for legacy position-based diff.
 
     \b
     Examples:
       dsm diff old.db new.db
-      dsm diff old.db new.db --cells
+      dsm diff old.db new.db --domain
       dsm diff old.db new.db --all
-      dsm diff old.db new.db --cells --positional
+      dsm diff old.db new.db --positional
     """
     from dsm.diff import diff_with_auto_import, format_diff, save_diff_to_db
 
     # --all enables everything
     if compare_all:
-        cells = True
+        include_domain = True
         compare_comment = True
         compare_style = True
         compare_merge = True
 
-    # --comment, --style, --merge-info each implies --cells
-    if compare_comment or compare_style or compare_merge:
-        cells = True
+    include_cells = not no_cells
 
     # smart is the default; --positional disables it
     smart = not positional
 
     t0 = time.perf_counter()
     result = diff_with_auto_import(path_a, path_b, on_progress=click.echo,
-                                    include_cells=cells,
+                                    include_cells=include_cells,
+                                    include_domain=include_domain,
                                     compare_comment=compare_comment,
                                     compare_style=compare_style,
                                     compare_merge=compare_merge,
@@ -370,7 +372,7 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
                 for dm in result._filter_mm("changed")
             ],
         }
-        if cells:
+        if include_cells:
             cell_list = []
             for cd in result.cells:
                 entry = {
