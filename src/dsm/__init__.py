@@ -6,6 +6,7 @@ from dsm.models import (
     ExcelMerge,
     ExcelSheet,
     ExcelWorkbook,
+    SheetConfigEntry,
     init_db,
 )
 from dsm.domain_models import (
@@ -33,6 +34,7 @@ __all__ = [
     "REGMAP_FIELD_MAP",
     "Register",
     "SheetConfig",
+    "SheetConfigEntry",
     "export_from_cells",
     "export_regmap_xlsx",
     "import_sheet",

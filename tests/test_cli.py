@@ -528,3 +528,84 @@ class TestMergePatch:
         assert result.exit_code == 0, result.output
         assert output.exists()
         assert "Patch merge" in result.output
+
+
+# ── dsm config ───────────────────────────────────────────────────────
+
+class TestConfig:
+    """Tests for dsm config subcommands."""
+
+    def test_config_list_seeds_defaults(self, runner, work_dir):
+        """config list creates defaults if DB is empty."""
+        db = work_dir / "cfg_test.db"
+        # Create empty DB
+        from dsm.models import init_db
+        init_db(f"sqlite:///{db}")
+
+        result = runner.invoke(main, ["config", "list", "--db", str(db)])
+        assert result.exit_code == 0, result.output
+        assert "level2_*" in result.output
+        assert "memorymap" in result.output
+
+    def test_config_add_and_remove(self, runner, work_dir):
+        """config add creates a new entry, config remove deletes it."""
+        db = work_dir / "cfg_add.db"
+        from dsm.models import init_db
+        init_db(f"sqlite:///{db}")
+
+        # Add
+        result = runner.invoke(main, [
+            "config", "add", "--db", str(db),
+            "--pattern", "custom_*", "--domain", "register",
+        ])
+        assert result.exit_code == 0, result.output
+        assert "custom_*" in result.output
+
+        # Verify it's in list
+        result = runner.invoke(main, ["config", "list", "--db", str(db)])
+        assert "custom_*" in result.output
+
+        # Remove (ID should be 1 since it's the first entry)
+        # Find the ID from list output
+        import re
+        ids = re.findall(r"^\s*(\d+)\s+custom_\*", result.output, re.MULTILINE)
+        assert ids
+        config_id = ids[0]
+
+        result = runner.invoke(main, ["config", "remove", "--db", str(db), config_id])
+        assert result.exit_code == 0, result.output
+
+    def test_config_reset(self, runner, work_dir):
+        """config reset restores defaults."""
+        db = work_dir / "cfg_reset.db"
+        from dsm.models import init_db
+        init_db(f"sqlite:///{db}")
+
+        # Add a custom config
+        runner.invoke(main, [
+            "config", "add", "--db", str(db),
+            "--pattern", "custom_*", "--domain", "register",
+        ])
+
+        # Reset
+        result = runner.invoke(main, ["config", "reset", "--db", str(db)])
+        assert result.exit_code == 0, result.output
+        assert "Reset to 2 default" in result.output
+
+        # Verify custom is gone, defaults remain
+        result = runner.invoke(main, ["config", "list", "--db", str(db)])
+        assert "custom_*" not in result.output
+        assert "level2_*" in result.output
+
+    def test_import_uses_db_config(self, runner, work_dir, sample_xlsx):
+        """Import reads sheet configs from DB when available."""
+        db = work_dir / "cfg_import.db"
+
+        # Import — should auto-seed configs
+        result = runner.invoke(main, ["import", str(sample_xlsx), "--db", str(db)])
+        assert result.exit_code == 0, result.output
+
+        # Verify configs were seeded
+        result = runner.invoke(main, ["config", "list", "--db", str(db)])
+        assert result.exit_code == 0, result.output
+        assert "level2_*" in result.output

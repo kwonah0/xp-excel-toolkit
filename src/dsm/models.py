@@ -80,6 +80,21 @@ class ExcelCell(Base):
 
 # ── DB setup helper ─────────────────────────────────────────────────
 
+# ── Sheet config (stored in DB) ─────────────────────────────────────
+
+class SheetConfigEntry(Base):
+    """Per-sheet import configuration stored in the database."""
+    __tablename__ = "sheet_config"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pattern: Mapped[str] = mapped_column(Text)              # fnmatch pattern, e.g. "level2_*"
+    domain_type: Mapped[str | None] = mapped_column(Text)   # "register" or "memorymap_entry"
+    field_map_json: Mapped[str | None] = mapped_column(Text)  # JSON: {"TYPE": "type", ...}
+    header_row: Mapped[int | None] = mapped_column(default=None)
+
+
+# ── DB setup helper ─────────────────────────────────────────────────
+
 def init_db(db_url: str = "sqlite:///excel_data.db"):
     engine = create_engine(db_url, echo=False)
     Base.metadata.create_all(engine)

@@ -82,8 +82,48 @@ MEMMAP_FIELD_MAP: dict[str, str] = {
 }
 
 
+# -- Domain class registry (tablename → class) --------------------------------
+
+DOMAIN_REGISTRY: dict[str, type] = {
+    "register": Register,
+    "memorymap_entry": MemoryMapEntry,
+}
+
+FIELD_MAP_REGISTRY: dict[str, dict[str, str]] = {
+    "register": REGMAP_FIELD_MAP,
+    "memorymap_entry": MEMMAP_FIELD_MAP,
+}
+
+
 # -- Default sheet configs (pattern → domain mapping) -------------------------
 # import_xlsx() uses this when sheet_configs is not provided.
+
+# Default patterns seeded into the DB on first import.
+DEFAULT_SHEET_CONFIGS = [
+    {"pattern": "level2_*", "domain_type": "register",
+     "field_map": REGMAP_FIELD_MAP, "header_row": None},
+    {"pattern": "memorymap", "domain_type": "memorymap_entry",
+     "field_map": MEMMAP_FIELD_MAP, "header_row": None},
+]
+
+
+def seed_default_configs(session) -> None:
+    """Insert default SheetConfigEntry rows if table is empty."""
+    import json
+    from dsm.models import SheetConfigEntry
+
+    if session.query(SheetConfigEntry).count() > 0:
+        return
+
+    for cfg in DEFAULT_SHEET_CONFIGS:
+        session.add(SheetConfigEntry(
+            pattern=cfg["pattern"],
+            domain_type=cfg["domain_type"],
+            field_map_json=json.dumps(cfg["field_map"]),
+            header_row=cfg["header_row"],
+        ))
+    session.flush()
+
 
 def _default_sheet_configs():
     from dsm.xlsx_parser import SheetConfig

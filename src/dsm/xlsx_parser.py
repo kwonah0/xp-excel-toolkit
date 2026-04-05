@@ -351,8 +351,7 @@ def import_xlsx(
     blob = path.read_bytes()
 
     if sheet_configs is None:
-        from dsm.domain_models import _default_sheet_configs
-        sheet_configs = _default_sheet_configs()
+        sheet_configs = _load_configs_from_db(session)
 
     if on_progress:
         on_progress(f"Loading workbook: {path.name}")
@@ -379,3 +378,31 @@ def import_xlsx(
 
     wb_xl.close()
     return sheets
+
+
+def _load_configs_from_db(session: Session) -> dict[str, SheetConfig]:
+    """Load SheetConfigEntry rows from DB and convert to SheetConfig dict.
+
+    If no configs exist in DB, seeds defaults first.
+    """
+    import json
+    from dsm.models import SheetConfigEntry
+    from dsm.domain_models import DOMAIN_REGISTRY, FIELD_MAP_REGISTRY, seed_default_configs
+
+    seed_default_configs(session)
+
+    configs: dict[str, SheetConfig] = {}
+    for entry in session.query(SheetConfigEntry).all():
+        domain_cls = DOMAIN_REGISTRY.get(entry.domain_type) if entry.domain_type else None
+        if entry.field_map_json:
+            field_map = json.loads(entry.field_map_json)
+        elif entry.domain_type:
+            field_map = FIELD_MAP_REGISTRY.get(entry.domain_type)
+        else:
+            field_map = None
+        configs[entry.pattern] = SheetConfig(
+            field_map=field_map,
+            domain_cls=domain_cls,
+            header_row=entry.header_row,
+        )
+    return configs

@@ -487,3 +487,119 @@ def _do_patch_merge(input_dir: Path, output: Path | None, base: Path):
                 )
             if len(group) > 5:
                 click.echo(f"    ... and {len(group) - 5} more")
+
+
+# -- config -----------------------------------------------------------------
+
+@main.group()
+def config():
+    """Manage sheet import configurations stored in the DB."""
+
+
+@config.command("list")
+@click.option("--db", "db_path", type=click.Path(exists=True, path_type=Path), required=True)
+def config_list(db_path: Path):
+    """List current sheet configurations."""
+    import json
+    from dsm.models import SheetConfigEntry
+    from dsm.domain_models import seed_default_configs
+
+    Session = init_db(f"sqlite:///{db_path}")
+    with Session() as session:
+        seed_default_configs(session)
+        session.commit()
+
+        entries = session.query(SheetConfigEntry).all()
+        if not entries:
+            click.echo("No sheet configurations found.")
+            return
+
+        click.echo(f"{'ID':>3} {'Pattern':<20} {'Domain':<20} {'Header':<7} Field Map")
+        click.echo("-" * 80)
+        for e in entries:
+            fm = ""
+            if e.field_map_json:
+                keys = list(json.loads(e.field_map_json).keys())
+                fm = ", ".join(keys[:5])
+                if len(keys) > 5:
+                    fm += f" ... (+{len(keys) - 5})"
+            click.echo(f"{e.id:>3} {e.pattern:<20} {e.domain_type or '-':<20} "
+                       f"{e.header_row or 'auto':<7} {fm}")
+
+
+@config.command("add")
+@click.option("--db", "db_path", type=click.Path(path_type=Path), required=True)
+@click.option("--pattern", required=True, help="Sheet name pattern (fnmatch, e.g. 'level2_*')")
+@click.option("--domain", "domain_type", default=None,
+              help="Domain type: 'register' or 'memorymap_entry'")
+@click.option("--field-map", "field_map_json", default=None,
+              help="Field map as JSON string (e.g. '{\"TYPE\":\"type\",...}')")
+@click.option("--header-row", type=int, default=None,
+              help="Explicit header row (default: auto-detect)")
+def config_add(db_path: Path, pattern: str, domain_type: str | None,
+               field_map_json: str | None, header_row: int | None):
+    """Add a sheet configuration entry."""
+    import json
+    from dsm.models import SheetConfigEntry
+    from dsm.domain_models import DOMAIN_REGISTRY, FIELD_MAP_REGISTRY
+
+    if domain_type and domain_type not in DOMAIN_REGISTRY:
+        raise click.UsageError(
+            f"Unknown domain type '{domain_type}'. "
+            f"Available: {', '.join(DOMAIN_REGISTRY.keys())}"
+        )
+
+    # If no field_map_json provided but domain_type is known, use default
+    if field_map_json is None and domain_type:
+        default_fm = FIELD_MAP_REGISTRY.get(domain_type)
+        if default_fm:
+            field_map_json = json.dumps(default_fm)
+    elif field_map_json:
+        # Validate JSON
+        json.loads(field_map_json)
+
+    Session = init_db(f"sqlite:///{db_path}")
+    with Session() as session:
+        entry = SheetConfigEntry(
+            pattern=pattern,
+            domain_type=domain_type,
+            field_map_json=field_map_json,
+            header_row=header_row,
+        )
+        session.add(entry)
+        session.commit()
+        click.echo(f"Added config #{entry.id}: pattern='{pattern}' domain={domain_type}")
+
+
+@config.command("remove")
+@click.option("--db", "db_path", type=click.Path(exists=True, path_type=Path), required=True)
+@click.argument("config_id", type=int)
+def config_remove(db_path: Path, config_id: int):
+    """Remove a sheet configuration by ID."""
+    from dsm.models import SheetConfigEntry
+
+    Session = init_db(f"sqlite:///{db_path}")
+    with Session() as session:
+        entry = session.get(SheetConfigEntry, config_id)
+        if not entry:
+            raise click.UsageError(f"Config #{config_id} not found.")
+        click.echo(f"Removing config #{entry.id}: pattern='{entry.pattern}' domain={entry.domain_type}")
+        session.delete(entry)
+        session.commit()
+
+
+@config.command("reset")
+@click.option("--db", "db_path", type=click.Path(exists=True, path_type=Path), required=True)
+def config_reset(db_path: Path):
+    """Reset configurations to defaults."""
+    from dsm.models import SheetConfigEntry
+    from dsm.domain_models import seed_default_configs
+
+    Session = init_db(f"sqlite:///{db_path}")
+    with Session() as session:
+        session.query(SheetConfigEntry).delete()
+        session.flush()
+        seed_default_configs(session)
+        session.commit()
+        count = session.query(SheetConfigEntry).count()
+        click.echo(f"Reset to {count} default configurations.")

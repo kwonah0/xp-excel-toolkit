@@ -11,9 +11,47 @@ from sqlalchemy import distinct, insert
 from sqlalchemy.orm import Session
 
 from dsm.merge import MergeResolver
-from dsm.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
+from dsm.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook, SheetConfigEntry
 from dsm.domain_models import REGMAP_FIELD_MAP, Register
 from dsm.xlsx_parser import _import_ws, _BULK_CHUNK
+
+
+def _find_register_sheets(
+    session: Session,
+    workbook_id: int,
+) -> list[ExcelSheet]:
+    """Find sheets that match register-type configs from DB.
+
+    Reads SheetConfigEntry rows where domain_type='register' and uses their
+    patterns to filter ExcelSheet records via fnmatch.
+    Falls back to 'level2_%' LIKE filter if no configs in DB.
+    """
+    import fnmatch as _fnmatch
+
+    configs = (
+        session.query(SheetConfigEntry)
+        .filter(SheetConfigEntry.domain_type == "register")
+        .all()
+    )
+
+    all_sheets = (
+        session.query(ExcelSheet)
+        .filter(ExcelSheet.workbook_id == workbook_id)
+        .all()
+    )
+
+    if not configs:
+        # Fallback: legacy hardcoded pattern
+        return [s for s in all_sheets if s.name.startswith("level2_")]
+
+    patterns = [c.pattern for c in configs]
+    matched: list[ExcelSheet] = []
+    for sheet in all_sheets:
+        for pat in patterns:
+            if _fnmatch.fnmatch(sheet.name, pat):
+                matched.append(sheet)
+                break
+    return matched
 
 
 def _build_ip_sheet(
@@ -307,11 +345,7 @@ def split_regmap_from_db(
             f"Workbook '{workbook_filename}' not found in DB. Run 'dsm import' first."
         )
 
-    level2_sheets = (
-        session.query(ExcelSheet)
-        .filter(ExcelSheet.workbook_id == wb_obj.id, ExcelSheet.name.like("level2_%"))
-        .all()
-    )
+    level2_sheets = _find_register_sheets(session, wb_obj.id)
 
     results: dict[str, Path] = {}
     total = len(level2_sheets)
