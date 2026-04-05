@@ -281,26 +281,26 @@ def memmap(db_path: Path):
               help="Compare merged cell ranges (implies --cells)")
 @click.option("--all", "compare_all", is_flag=True, default=False,
               help="Enable all cell comparisons (cells + comment + style + merge)")
-@click.option("--smart", is_flag=True, default=False,
-              help="Use sequence-based smart diff (handles row insert/delete without cascade)")
+@click.option("--positional", is_flag=True, default=False,
+              help="Use positional diff instead of smart diff (row/col based, may cascade on insert/delete)")
 def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
          as_json: bool, cells: bool, compare_comment: bool, compare_style: bool,
-         compare_merge: bool, compare_all: bool, smart: bool):
+         compare_merge: bool, compare_all: bool, positional: bool):
     """Compare two register map DBs or xlsx files.
 
     Accepts .db or .xlsx paths. If xlsx is given, auto-imports to DB first.
-    Use --db to save results into a queryable SQLite DB.
+    Uses smart (sequence-based) diff by default for cell comparison.
     Use --cells to include cell-level comparison (raw_value only).
     Add --comment, --style, --merge-info for deeper comparison (each implies --cells).
     Use --all to enable all comparisons at once.
-    Use --smart for sequence-based diff that handles row insert/delete correctly.
+    Use --positional for legacy position-based diff.
 
     \b
     Examples:
       dsm diff old.db new.db
       dsm diff old.db new.db --cells
-      dsm diff old.db new.db --cells --smart
-      dsm diff old.db new.db --all --smart
+      dsm diff old.db new.db --all
+      dsm diff old.db new.db --cells --positional
     """
     from dsm.diff import diff_with_auto_import, format_diff, save_diff_to_db
 
@@ -315,9 +315,8 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
     if compare_comment or compare_style or compare_merge:
         cells = True
 
-    # --smart implies --cells
-    if smart:
-        cells = True
+    # smart is the default; --positional disables it
+    smart = not positional
 
     t0 = time.perf_counter()
     result = diff_with_auto_import(path_a, path_b, on_progress=click.echo,

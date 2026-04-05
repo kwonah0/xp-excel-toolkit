@@ -377,7 +377,7 @@ class TestDiff:
 
         result = runner.invoke(main, [
             "diff", str(db), str(db),
-            "--smart",
+            "--cells",
             "--db", str(work_dir / "diff_smart_same.db"),
         ])
 
@@ -444,7 +444,7 @@ class TestDiff:
         # Positional diff: should show many changes (cascade)
         result_pos = runner.invoke(main, [
             "diff", str(db_a), str(db_b),
-            "--cells",
+            "--cells", "--positional",
             "--db", str(work_dir / "diff_pos.db"),
         ])
         assert result_pos.exit_code == 0, result_pos.output
@@ -452,7 +452,7 @@ class TestDiff:
         # Smart diff: should show fewer changes (only the inserted row)
         result_smart = runner.invoke(main, [
             "diff", str(db_a), str(db_b),
-            "--smart",
+            "--cells",
             "--db", str(work_dir / "diff_smart.db"),
         ])
         assert result_smart.exit_code == 0, result_smart.output
@@ -491,7 +491,7 @@ class TestDiff:
 
         result = runner.invoke(main, [
             "diff", str(db_a), str(db_b),
-            "--smart",
+            "--cells",
             "--db", str(work_dir / "diff_smart_mod.db"),
         ])
 

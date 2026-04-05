@@ -308,7 +308,35 @@ def _diff_cells_smart(
 
         for tag, i1, i2, j1, j2 in sm.get_opcodes():
             if tag == "equal":
-                # Rows are identical — no diff
+                # Values are identical, but comment/style/merge may differ
+                if not (compare_comment or compare_style or compare_merge):
+                    continue
+                for idx_a, idx_b in zip(range(i1, i2), range(j1, j2)):
+                    old_row_num, old_cols = rows_a[idx_a]
+                    new_row_num, new_cols = rows_b[idx_b]
+                    all_cols = sorted(set(old_cols) | set(new_cols))
+                    for col in all_cols:
+                        ca = old_cols.get(col)
+                        cb = new_cols.get(col)
+                        if ca is None or cb is None:
+                            continue
+                        comment_diff = compare_comment and ca.comment != cb.comment
+                        style_diff = compare_style and ca.style != cb.style
+                        mr_a = merges_a.get(ca.merge_id) if (compare_merge and ca.merge_id) else None
+                        mr_b = merges_b.get(cb.merge_id) if (compare_merge and cb.merge_id) else None
+                        merge_diff = compare_merge and mr_a != mr_b
+                        if comment_diff or style_diff or merge_diff:
+                            ea = _cell_extras(ca, merges_a)
+                            eb = _cell_extras(cb, merges_b)
+                            diffs.append(DiffCell(
+                                status="changed", sheet=sheet,
+                                row=new_row_num, col=col,
+                                old_row=old_row_num, new_row=new_row_num,
+                                old_value=ca.raw_value, new_value=cb.raw_value,
+                                old_comment=ea.get("comment"), new_comment=eb.get("comment"),
+                                old_style=ea.get("style"), new_style=eb.get("style"),
+                                old_merge_range=ea.get("merge_range"), new_merge_range=eb.get("merge_range"),
+                            ))
                 continue
 
             elif tag == "delete":
