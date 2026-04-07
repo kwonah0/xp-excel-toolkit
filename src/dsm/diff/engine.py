@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -656,9 +657,23 @@ def diff_with_auto_import(
     """Diff two paths that can be .db or .xlsx files.
 
     If an xlsx is given, it is imported into a temp DB first.
+    When both inputs need import, they are imported in parallel.
     """
-    db_a = _resolve_db(path_a, on_progress=on_progress)
-    db_b = _resolve_db(path_b, on_progress=on_progress)
+    needs_a = path_a.suffix in (".xlsx", ".xls") and not path_a.with_suffix(".db").exists()
+    needs_b = path_b.suffix in (".xlsx", ".xls") and not path_b.with_suffix(".db").exists()
+
+    if needs_a and needs_b:
+        if on_progress:
+            on_progress(f"Auto-importing {path_a.name} and {path_b.name} in parallel...")
+        with ProcessPoolExecutor(max_workers=2) as pool:
+            fut_a = pool.submit(_resolve_db_worker, path_a)
+            fut_b = pool.submit(_resolve_db_worker, path_b)
+            db_a = fut_a.result()
+            db_b = fut_b.result()
+    else:
+        db_a = _resolve_db(path_a, on_progress=on_progress)
+        db_b = _resolve_db(path_b, on_progress=on_progress)
+
     return diff_databases(db_a, db_b, on_progress=on_progress,
                           include_cells=include_cells,
                           include_domain=include_domain,
@@ -666,6 +681,11 @@ def diff_with_auto_import(
                           compare_style=compare_style,
                           compare_merge=compare_merge,
                           smart=smart)
+
+
+def _resolve_db_worker(path: Path) -> Path:
+    """Pickle-safe version of _resolve_db for multiprocessing (no callbacks)."""
+    return _resolve_db(path)
 
 
 def _resolve_db(
