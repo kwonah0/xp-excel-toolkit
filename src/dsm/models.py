@@ -65,6 +65,7 @@ class ExcelCell(Base):
     row: Mapped[int]
     col: Mapped[int]
     raw_value: Mapped[str | None] = mapped_column(Text)
+    cached_value: Mapped[str | None] = mapped_column(Text)  # formula result (data_only)
     style: Mapped[dict | None] = mapped_column(JSON)  # {bg_color, font_bold, number_format, ...}
     comment: Mapped[str | None] = mapped_column(Text)  # Excel cell note/comment text
     formula_type: Mapped[str | None] = mapped_column(Text)  # "array" or "dataTable"

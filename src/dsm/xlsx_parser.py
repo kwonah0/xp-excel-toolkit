@@ -333,6 +333,7 @@ def import_xlsx(
     *,
     sheet_configs: dict[str, SheetConfig] | None = None,
     on_progress: Callable[[str], None] | None = None,
+    with_values: bool = False,
 ) -> list[ExcelSheet]:
     """Import all sheets from a .xlsx file.
 
@@ -398,6 +399,43 @@ def import_xlsx(
         sheets.append(sheet_obj)
 
     wb_xl.close()
+
+    # -- Optional: load cached formula values via data_only=True -----------
+    if with_values:
+        if on_progress:
+            on_progress("Loading cached formula values (data_only=True)...")
+        wb_val = openpyxl.load_workbook(path, data_only=True)
+        for sheet_obj in sheets:
+            ws_val = wb_val[sheet_obj.name]
+            # Build lookup: (row, col) -> cached value string
+            cached: dict[tuple[int, int], str] = {}
+            for row in ws_val.iter_rows(
+                min_row=1,
+                max_row=ws_val.max_row,
+                max_col=ws_val.max_column,
+            ):
+                for cell in row:
+                    if cell.value is not None:
+                        cached[(cell.row, cell.column)] = str(cell.value)
+            if cached:
+                # Bulk update cells that have formulas
+                from sqlalchemy import update
+                for (r, c), val in cached.items():
+                    session.execute(
+                        update(ExcelCell)
+                        .where(
+                            ExcelCell.sheet_id == sheet_obj.id,
+                            ExcelCell.row == r,
+                            ExcelCell.col == c,
+                            ExcelCell.raw_value.like("=%"),
+                        )
+                        .values(cached_value=val)
+                    )
+                session.flush()
+        wb_val.close()
+        if on_progress:
+            on_progress("Cached formula values saved.")
+
     return sheets
 
 

@@ -6,8 +6,12 @@ from dsm.diff.models import DiffCell, DiffMemmap, DiffRegister, DiffResult, _REG
 from dsm.diff.engine import _reg_changes, _mm_changes
 
 
-def format_diff(result: DiffResult, verbose: bool = False) -> str:
-    """Format a DiffResult as a human-readable string."""
+def format_diff(result: DiffResult, verbose: bool = False, limit: int = 0) -> str:
+    """Format a DiffResult as a human-readable string.
+
+    Args:
+        limit: Max items to show per category. 0 = no limit (show all).
+    """
     lines: list[str] = []
 
     added_regs = result._filter_regs("added")
@@ -102,27 +106,33 @@ def format_diff(result: DiffResult, verbose: bool = False) -> str:
                 return f"[{c.sheet}] R{c.old_row}\u2192R{c.new_row}C{c.col}"
             return f"[{c.sheet}] R{c.row}C{c.col}"
 
+        def _show_items(items, n):
+            return items[:n] if n > 0 else items
+
         if added_cells:
             lines.append(f"  Added ({len(added_cells)}):")
-            for c in added_cells[:20]:
+            shown = _show_items(added_cells, limit)
+            for c in shown:
                 loc = f"[{c.sheet}] R{c.new_row or c.row}C{c.col}" if is_smart else f"[{c.sheet}] R{c.row}C{c.col}"
                 lines.append(f"    + {loc}: {c.new_value!r}")
-            if len(added_cells) > 20:
-                lines.append(f"    ... and {len(added_cells) - 20} more")
+            if limit > 0 and len(added_cells) > limit:
+                lines.append(f"    ... and {len(added_cells) - limit} more")
             lines.append("")
 
         if removed_cells:
             lines.append(f"  Removed ({len(removed_cells)}):")
-            for c in removed_cells[:20]:
+            shown = _show_items(removed_cells, limit)
+            for c in shown:
                 loc = f"[{c.sheet}] R{c.old_row or c.row}C{c.col}" if is_smart else f"[{c.sheet}] R{c.row}C{c.col}"
                 lines.append(f"    - {loc}: {c.old_value!r}")
-            if len(removed_cells) > 20:
-                lines.append(f"    ... and {len(removed_cells) - 20} more")
+            if limit > 0 and len(removed_cells) > limit:
+                lines.append(f"    ... and {len(removed_cells) - limit} more")
             lines.append("")
 
         if changed_cells:
             lines.append(f"  Changed ({len(changed_cells)}):")
-            for c in changed_cells[:20]:
+            shown = _show_items(changed_cells, limit)
+            for c in shown:
                 loc = _cell_loc(c)
                 parts = [f"    ~ {loc}:"]
                 if c.old_value != c.new_value:
@@ -134,8 +144,8 @@ def format_diff(result: DiffResult, verbose: bool = False) -> str:
                     lines.append(f"        style changed")
                 if c.old_merge_range != c.new_merge_range and (c.old_merge_range or c.new_merge_range):
                     lines.append(f"        merge: {c.old_merge_range} -> {c.new_merge_range}")
-            if len(changed_cells) > 20:
-                lines.append(f"    ... and {len(changed_cells) - 20} more")
+            if limit > 0 and len(changed_cells) > limit:
+                lines.append(f"    ... and {len(changed_cells) - limit} more")
             lines.append("")
 
     # Summary

@@ -24,7 +24,7 @@ def main():
 
 # -- import -----------------------------------------------------------------
 
-def _import_cmd(xlsx_path: Path, db_path: Path | None):
+def _import_cmd(xlsx_path: Path, db_path: Path | None, with_values: bool = False):
     if db_path is None:
         db_path = _default_db(xlsx_path)
 
@@ -35,7 +35,8 @@ def _import_cmd(xlsx_path: Path, db_path: Path | None):
 
     from dsm.xlsx_parser import import_xlsx
     with Session() as session:
-        sheets = import_xlsx(session, xlsx_path, on_progress=click.echo)
+        sheets = import_xlsx(session, xlsx_path, on_progress=click.echo,
+                             with_values=with_values)
         click.echo("Committing to DB...")
         session.commit()
         sheet_info = [(s.name, s.header_row) for s in sheets]
@@ -50,9 +51,11 @@ def _import_cmd(xlsx_path: Path, db_path: Path | None):
 @click.argument("xlsx_path", type=click.Path(exists=True, path_type=Path))
 @click.option("--db", "db_path", type=click.Path(path_type=Path), default=None,
               help="SQLite DB path (default: <xlsx_stem>.db)")
-def import_cmd(xlsx_path: Path, db_path: Path | None):
+@click.option("--with-values", is_flag=True, default=False,
+              help="Also store cached formula results (loads workbook twice)")
+def import_cmd(xlsx_path: Path, db_path: Path | None, with_values: bool):
     """Import all sheets from an xlsx file into SQLite DB."""
-    _import_cmd(xlsx_path, db_path)
+    _import_cmd(xlsx_path, db_path, with_values=with_values)
 
 
 main.add_command(import_cmd)
@@ -285,10 +288,13 @@ def memmap(db_path: Path):
               help="Enable all comparisons (cells + domain + comment + style + merge)")
 @click.option("--positional", is_flag=True, default=False,
               help="Use positional diff instead of smart diff (row/col based, may cascade on insert/delete)")
+@click.option("--limit", type=int, default=0,
+              help="Max items per category in output (0 = show all, default: 0)")
 def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
          as_json: bool, include_domain: bool, no_cells: bool,
          compare_comment: bool, compare_style: bool,
-         compare_merge: bool, compare_all: bool, positional: bool):
+         compare_merge: bool, compare_all: bool, positional: bool,
+         limit: int):
     """Compare two register map DBs or xlsx files.
 
     Accepts .db or .xlsx paths. If xlsx is given, auto-imports to DB first.
@@ -393,7 +399,7 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
             data["cell_diffs"] = cell_list
         click.echo(json.dumps(data, indent=2, ensure_ascii=False))
     else:
-        click.echo(format_diff(result, verbose=verbose))
+        click.echo(format_diff(result, verbose=verbose, limit=limit))
 
     # Save to DB
     if diff_db_path is None:
