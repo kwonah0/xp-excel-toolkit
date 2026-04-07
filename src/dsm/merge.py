@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
+
 if TYPE_CHECKING:
     from openpyxl.worksheet.worksheet import Worksheet
     from sqlalchemy.orm import Session
@@ -29,9 +31,15 @@ class MergeResolver:
                     self._merge_map[(r, c)] = origin
 
             origin_cell = ws.cell(row=mr.min_row, column=mr.min_col)
-            self._origin_values[origin] = (
-                str(origin_cell.value) if origin_cell.value is not None else None
-            )
+            val = origin_cell.value
+            if val is None:
+                self._origin_values[origin] = None
+            elif isinstance(val, ArrayFormula):
+                self._origin_values[origin] = val.text if val.text else str(val.ref)
+            elif isinstance(val, DataTableFormula):
+                self._origin_values[origin] = None
+            else:
+                self._origin_values[origin] = str(val)
 
     @classmethod
     def from_db(cls, session: Session, sheet_id: int) -> MergeResolver:

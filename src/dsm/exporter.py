@@ -10,6 +10,7 @@ from openpyxl.cell.cell import Cell, MergedCell
 from openpyxl.comments import Comment
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 from sqlalchemy.orm import Session
 
 from dsm.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
@@ -147,7 +148,14 @@ def export_from_cells(
         .all()
     )
     for cell_rec in cells:
-        c = ws.cell(row=cell_rec.row, column=cell_rec.col, value=cell_rec.raw_value)
+        # Restore formula objects if applicable
+        if cell_rec.formula_type == "array" and cell_rec.formula_ref:
+            value = ArrayFormula(ref=cell_rec.formula_ref, text=cell_rec.raw_value)
+        elif cell_rec.formula_type == "dataTable" and cell_rec.formula_ref:
+            value = DataTableFormula(ref=cell_rec.formula_ref)
+        else:
+            value = cell_rec.raw_value
+        c = ws.cell(row=cell_rec.row, column=cell_rec.col, value=value)
         _apply_style(c, cell_rec.style)
         if cell_rec.comment:
             c.comment = Comment(cell_rec.comment, "")

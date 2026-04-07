@@ -10,6 +10,7 @@ from typing import Any
 
 import openpyxl
 from openpyxl.cell.cell import Cell
+from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 from openpyxl.worksheet.worksheet import Worksheet
 from sqlalchemy import insert
 from sqlalchemy.orm import Session
@@ -19,6 +20,22 @@ from dsm.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
 
 # Max dicts per Core bulk insert execute() call (avoids SQLite variable limit)
 _BULK_CHUNK = 500
+
+
+def _extract_cell_value(value: Any) -> tuple[str | None, str | None, str | None]:
+    """Extract cell value, formula_type, and formula_ref from an openpyxl cell value.
+
+    Returns:
+        (raw_value, formula_type, formula_ref)
+    """
+    if value is None:
+        return None, None, None
+    if isinstance(value, ArrayFormula):
+        text = value.text if value.text else None
+        return text, "array", value.ref
+    if isinstance(value, DataTableFormula):
+        return None, "dataTable", value.ref
+    return str(value), None, None
 
 
 @dataclass
@@ -182,8 +199,9 @@ def _import_ws(
 
             if merger.is_merged(r, c):
                 raw_val = merger.get_value(r, c)
+                f_type, f_ref = None, None
             else:
-                raw_val = str(cell.value) if cell.value is not None else None
+                raw_val, f_type, f_ref = _extract_cell_value(cell.value)
 
             merge_key = None
             is_origin = merger.is_origin(r, c)
@@ -201,6 +219,8 @@ def _import_ws(
                 "raw_value": raw_val,
                 "style": style,
                 "comment": comment_text,
+                "formula_type": f_type,
+                "formula_ref": f_ref,
                 "merge_id": merge_key,
                 "is_merge_origin": is_origin,
             })
@@ -240,7 +260,8 @@ def _import_ws(
                     val = merger.get_value(row_idx, col_idx)
                 if val is not None:
                     has_data = True
-                    row_data[field_name] = str(val)
+                    raw, _, _ = _extract_cell_value(val)
+                    row_data[field_name] = raw
                 else:
                     row_data[field_name] = None
 

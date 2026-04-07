@@ -597,6 +597,87 @@ class TestConfig:
         assert "custom_*" not in result.output
         assert "level2_*" in result.output
 
+
+# ── Formula roundtrip ────────────────────────────────────────────────
+
+class TestFormulaRoundtrip:
+    """Test that ArrayFormula and DataTableFormula survive import → export."""
+
+    def test_array_formula_stored_correctly(self, tmp_path):
+        """ArrayFormula.text and ref are stored in ExcelCell columns."""
+        import openpyxl
+        from openpyxl.worksheet.formula import ArrayFormula
+
+        # Create xlsx with array formula
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "formulas"
+        ws["A1"] = 10
+        ws["A2"] = 20
+        ws["B1"] = ArrayFormula(ref="B1:B2", text="=A1:A2*2")
+        xlsx_path = tmp_path / "formulas.xlsx"
+        wb.save(xlsx_path)
+        wb.close()
+
+        # Import
+        from dsm.models import ExcelCell, init_db
+        from dsm.xlsx_parser import import_xlsx
+
+        db_path = tmp_path / "formulas.db"
+        Session = init_db(f"sqlite:///{db_path}")
+        with Session() as session:
+            import_xlsx(session, xlsx_path)
+            session.commit()
+
+            # Verify formula_type and formula_ref stored
+            cell = (
+                session.query(ExcelCell)
+                .filter(ExcelCell.formula_type == "array")
+                .first()
+            )
+            assert cell is not None, "ArrayFormula cell not found in DB"
+            assert cell.formula_ref == "B1:B2"
+            assert cell.raw_value == "=A1:A2*2"
+
+    def test_array_formula_export_roundtrip(self, tmp_path):
+        """ArrayFormula survives import → DB → export_from_cells."""
+        import openpyxl
+        from openpyxl.worksheet.formula import ArrayFormula
+
+        # Create xlsx with array formula
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "formulas"
+        ws["A1"] = 10
+        ws["B1"] = ArrayFormula(ref="B1:B2", text="=A1:A2*2")
+        xlsx_path = tmp_path / "formulas.xlsx"
+        wb.save(xlsx_path)
+        wb.close()
+
+        # Import
+        from dsm.models import ExcelSheet, init_db
+        from dsm.xlsx_parser import import_xlsx
+        from dsm.exporter import export_from_cells
+
+        db_path = tmp_path / "formulas.db"
+        Session = init_db(f"sqlite:///{db_path}")
+        with Session() as session:
+            import_xlsx(session, xlsx_path)
+            session.commit()
+
+            sheet = session.query(ExcelSheet).first()
+            out_path = tmp_path / "exported.xlsx"
+            export_from_cells(session, sheet.id, out_path)
+
+        # Verify exported xlsx has ArrayFormula
+        wb2 = openpyxl.load_workbook(out_path, data_only=False)
+        ws2 = wb2.active
+        val = ws2["B1"].value
+        assert isinstance(val, ArrayFormula), f"Expected ArrayFormula, got {type(val)}"
+        assert val.text == "=A1:A2*2"
+        assert val.ref == "B1:B2"
+        wb2.close()
+
     def test_import_uses_db_config(self, runner, work_dir, sample_xlsx):
         """Import reads sheet configs from DB when available."""
         db = work_dir / "cfg_import.db"

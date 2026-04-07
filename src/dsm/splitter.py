@@ -7,6 +7,7 @@ from pathlib import Path
 
 import openpyxl
 from openpyxl.cell.cell import Cell
+from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 from sqlalchemy import distinct, insert
 from sqlalchemy.orm import Session
 
@@ -292,7 +293,13 @@ def _export_multi_sheet(
             .all()
         )
         for cell_rec in cells:
-            c = ws.cell(row=cell_rec.row, column=cell_rec.col, value=cell_rec.raw_value)
+            if cell_rec.formula_type == "array" and cell_rec.formula_ref:
+                value = ArrayFormula(ref=cell_rec.formula_ref, text=cell_rec.raw_value)
+            elif cell_rec.formula_type == "dataTable" and cell_rec.formula_ref:
+                value = DataTableFormula(ref=cell_rec.formula_ref)
+            else:
+                value = cell_rec.raw_value
+            c = ws.cell(row=cell_rec.row, column=cell_rec.col, value=value)
             _apply_style(c, cell_rec.style)
             if cell_rec.comment:
                 c.comment = Comment(cell_rec.comment, "")
