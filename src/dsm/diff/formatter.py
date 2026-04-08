@@ -100,52 +100,79 @@ def format_diff(result: DiffResult, verbose: bool = False, limit: int = 0) -> st
         lines.append(f"=== Cells {'(smart)' if is_smart else ''} ===")
         lines.append("")
 
-        def _cell_loc(c: DiffCell) -> str:
-            """Format cell location, showing old_row->new_row for smart diff."""
-            if is_smart and c.old_row is not None and c.new_row is not None and c.old_row != c.new_row:
-                return f"[{c.sheet}] R{c.old_row}\u2192R{c.new_row}C{c.col}"
-            return f"[{c.sheet}] R{c.row}C{c.col}"
+        def _group_by_row(cells: list[DiffCell]) -> dict[tuple[str, int], list[DiffCell]]:
+            """Group cells by (sheet, row) for row-based display."""
+            groups: dict[tuple[str, int], list[DiffCell]] = {}
+            for c in cells:
+                row_num = (c.new_row or c.row) if is_smart else c.row
+                key = (c.sheet, row_num)
+                groups.setdefault(key, []).append(c)
+            return groups
 
-        def _show_items(items, n):
-            return items[:n] if n > 0 else items
+        def _limit_groups(groups, n):
+            if n <= 0:
+                return groups
+            result_g = {}
+            count = 0
+            for k, v in groups.items():
+                if count >= n:
+                    break
+                result_g[k] = v
+                count += 1
+            return result_g
 
         if added_cells:
-            lines.append(f"  Added ({len(added_cells)}):")
-            shown = _show_items(added_cells, limit)
-            for c in shown:
-                loc = f"[{c.sheet}] R{c.new_row or c.row}C{c.col}" if is_smart else f"[{c.sheet}] R{c.row}C{c.col}"
-                lines.append(f"    + {loc}: {c.new_value!r}")
-            if limit > 0 and len(added_cells) > limit:
-                lines.append(f"    ... and {len(added_cells) - limit} more")
+            groups = _group_by_row(added_cells)
+            lines.append(f"  Added ({len(added_cells)} cells in {len(groups)} rows):")
+            shown = _limit_groups(groups, limit)
+            for (sheet, row_num), cells_in_row in shown.items():
+                lines.append(f"    + [{sheet}] R{row_num}:")
+                for c in sorted(cells_in_row, key=lambda x: x.col):
+                    lines.append(f"        C{c.col}: {c.new_value!r}")
+            if limit > 0 and len(groups) > limit:
+                lines.append(f"    ... and {len(groups) - limit} more rows")
             lines.append("")
 
         if removed_cells:
-            lines.append(f"  Removed ({len(removed_cells)}):")
-            shown = _show_items(removed_cells, limit)
-            for c in shown:
-                loc = f"[{c.sheet}] R{c.old_row or c.row}C{c.col}" if is_smart else f"[{c.sheet}] R{c.row}C{c.col}"
-                lines.append(f"    - {loc}: {c.old_value!r}")
-            if limit > 0 and len(removed_cells) > limit:
-                lines.append(f"    ... and {len(removed_cells) - limit} more")
+            groups = _group_by_row(removed_cells)
+            lines.append(f"  Removed ({len(removed_cells)} cells in {len(groups)} rows):")
+            shown = _limit_groups(groups, limit)
+            for (sheet, row_num), cells_in_row in shown.items():
+                lines.append(f"    - [{sheet}] R{row_num}:")
+                for c in sorted(cells_in_row, key=lambda x: x.col):
+                    lines.append(f"        C{c.col}: {c.old_value!r}")
+            if limit > 0 and len(groups) > limit:
+                lines.append(f"    ... and {len(groups) - limit} more rows")
             lines.append("")
 
         if changed_cells:
-            lines.append(f"  Changed ({len(changed_cells)}):")
-            shown = _show_items(changed_cells, limit)
-            for c in shown:
-                loc = _cell_loc(c)
-                parts = [f"    ~ {loc}:"]
-                if c.old_value != c.new_value:
-                    parts.append(f" {c.old_value!r} -> {c.new_value!r}")
-                lines.append("".join(parts))
-                if c.old_comment != c.new_comment and (c.old_comment or c.new_comment):
-                    lines.append(f"        comment: {c.old_comment!r} -> {c.new_comment!r}")
-                if c.old_style != c.new_style and (c.old_style or c.new_style):
-                    lines.append(f"        style changed")
-                if c.old_merge_range != c.new_merge_range and (c.old_merge_range or c.new_merge_range):
-                    lines.append(f"        merge: {c.old_merge_range} -> {c.new_merge_range}")
-            if limit > 0 and len(changed_cells) > limit:
-                lines.append(f"    ... and {len(changed_cells) - limit} more")
+            groups: dict[tuple[str, int, int | None], list[DiffCell]] = {}
+            for c in changed_cells:
+                row_num = c.row
+                old_r = c.old_row if is_smart else None
+                key = (c.sheet, row_num, old_r)
+                groups.setdefault(key, []).append(c)
+
+            lines.append(f"  Changed ({len(changed_cells)} cells in {len(groups)} rows):")
+            shown_keys = list(groups.keys())
+            if limit > 0:
+                shown_keys = shown_keys[:limit]
+            for sheet, row_num, old_r in shown_keys:
+                if is_smart and old_r is not None and old_r != row_num:
+                    lines.append(f"    ~ [{sheet}] R{old_r}\u2192R{row_num}:")
+                else:
+                    lines.append(f"    ~ [{sheet}] R{row_num}:")
+                for c in sorted(groups[(sheet, row_num, old_r)], key=lambda x: x.col):
+                    if c.old_value != c.new_value:
+                        lines.append(f"        C{c.col}: {c.old_value!r} -> {c.new_value!r}")
+                    if c.old_comment != c.new_comment and (c.old_comment or c.new_comment):
+                        lines.append(f"        C{c.col} comment: {c.old_comment!r} -> {c.new_comment!r}")
+                    if c.old_style != c.new_style and (c.old_style or c.new_style):
+                        lines.append(f"        C{c.col} style changed")
+                    if c.old_merge_range != c.new_merge_range and (c.old_merge_range or c.new_merge_range):
+                        lines.append(f"        C{c.col} merge: {c.old_merge_range} -> {c.new_merge_range}")
+            if limit > 0 and len(groups) > limit:
+                lines.append(f"    ... and {len(groups) - limit} more rows")
             lines.append("")
 
     # Summary

@@ -290,11 +290,15 @@ def memmap(db_path: Path):
               help="Use positional diff instead of smart diff (row/col based, may cascade on insert/delete)")
 @click.option("--limit", type=int, default=0,
               help="Max items per category in output (0 = show all, default: 0)")
+@click.option("--output", "-o", type=click.Path(path_type=Path), default=None,
+              help="Save diff output to file (format auto-detected from extension: .json, .txt)")
+@click.option("--no-db", is_flag=True, default=False,
+              help="Do not save diff results to a SQLite DB")
 def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
          as_json: bool, include_domain: bool, no_cells: bool,
          compare_comment: bool, compare_style: bool,
          compare_merge: bool, compare_all: bool, positional: bool,
-         limit: int):
+         limit: int, output: Path | None, no_db: bool):
     """Compare two register map DBs or xlsx files.
 
     Accepts .db or .xlsx paths. If xlsx is given, auto-imports to DB first.
@@ -335,7 +339,10 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
                                     smart=smart)
     elapsed = time.perf_counter() - t0
 
-    if as_json:
+    # Auto-detect JSON from --output extension
+    use_json = as_json or (output and output.suffix == ".json")
+
+    if use_json:
         import json
         from dsm.diff import _REG_FIELDS, _MEMMAP_FIELDS, _reg_changes, _mm_changes
 
@@ -397,15 +404,23 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
                     entry["new_merge_range"] = cd.new_merge_range
                 cell_list.append(entry)
             data["cell_diffs"] = cell_list
-        click.echo(json.dumps(data, indent=2, ensure_ascii=False))
+        output_text = json.dumps(data, indent=2, ensure_ascii=False)
     else:
-        click.echo(format_diff(result, verbose=verbose, limit=limit))
+        output_text = format_diff(result, verbose=verbose, limit=limit)
 
-    # Save to DB
-    if diff_db_path is None:
-        diff_db_path = Path(f"diff_{path_a.stem}_{path_b.stem}.db")
-    save_diff_to_db(result, diff_db_path, path_a, path_b)
-    click.echo(f"\nSaved to {diff_db_path}")
+    # Output: file or stdout
+    if output:
+        output.write_text(output_text, encoding="utf-8")
+        click.echo(f"Diff output saved to {output}")
+    else:
+        click.echo(output_text)
+
+    # Save to DB (unless --no-db)
+    if not no_db:
+        if diff_db_path is None:
+            diff_db_path = Path(f"diff_{path_a.stem}_{path_b.stem}.db")
+        save_diff_to_db(result, diff_db_path, path_a, path_b)
+        click.echo(f"Diff DB saved to {diff_db_path}")
 
     click.echo(f"({elapsed:.1f}s)")
 

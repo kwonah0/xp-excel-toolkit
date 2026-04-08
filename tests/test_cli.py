@@ -213,7 +213,7 @@ class TestDiff:
 
         assert result.exit_code == 0, result.output
         assert (work_dir / "diff.db").exists()
-        assert "Saved to" in result.output
+        assert "Diff DB saved to" in result.output
 
     def test_diff_identical(self, runner, work_dir):
         xlsx = work_dir / "regmap_sample.xlsx"
