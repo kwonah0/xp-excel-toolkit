@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+
 from dsm.diff.models import DiffCell, DiffMemmap, DiffRegister, DiffResult, _REG_FIELDS, _MEMMAP_FIELDS
 from dsm.diff.engine import _reg_changes, _mm_changes
 
@@ -185,3 +187,179 @@ def format_diff(result: DiffResult, verbose: bool = False, limit: int = 0) -> st
     lines.append(f"Summary: {', '.join(summary_parts)}")
 
     return "\n".join(lines)
+
+
+# ── Daff tabular diff format ──────────────────────────────────────────
+
+
+def format_daff(result: DiffResult) -> str:
+    """Format a DiffResult as daff-style tabular diff.
+
+    Daff markers:
+      +++  = added row
+      ---  = removed row
+      ->   = changed cell (old->new)
+      (blank) = unchanged
+    """
+    if not result.cells:
+        return "No differences found."
+
+    lines: list[str] = []
+
+    # Group all cells by sheet
+    by_sheet: dict[str, list[DiffCell]] = defaultdict(list)
+    for c in result.cells:
+        by_sheet[c.sheet].append(c)
+
+    for sheet_name, cells in by_sheet.items():
+        # Collect all columns and rows involved
+        all_cols: set[int] = set()
+        # Group by (status, row_num) to build row data
+        row_data: dict[int, dict] = {}  # row_num -> {status, cols: {col: cell}}
+
+        for c in cells:
+            all_cols.add(c.col)
+            row_num = c.new_row or c.old_row or c.row
+            if row_num not in row_data:
+                row_data[row_num] = {"status": c.status, "cols": {}}
+            row_data[row_num]["cols"][c.col] = c
+
+        sorted_cols = sorted(all_cols)
+        sorted_rows = sorted(row_data.keys())
+
+        # Column headers
+        col_headers = [""] + [f"C{c}" for c in sorted_cols]
+
+        # Build table rows
+        table_rows: list[list[str]] = []
+        for row_num in sorted_rows:
+            rd = row_data[row_num]
+            status = rd["status"]
+
+            if status == "added":
+                marker = "+++"
+            elif status == "removed":
+                marker = "---"
+            else:
+                marker = "->"
+
+            row_cells = [f"{marker} R{row_num}"]
+            for col in sorted_cols:
+                cell = rd["cols"].get(col)
+                if cell is None:
+                    row_cells.append("")
+                elif status == "added":
+                    row_cells.append(cell.new_value or "")
+                elif status == "removed":
+                    row_cells.append(cell.old_value or "")
+                else:  # changed
+                    old = cell.old_value or ""
+                    new = cell.new_value or ""
+                    if old != new:
+                        row_cells.append(f"{old}->{new}")
+                    elif cell.old_comment != cell.new_comment:
+                        row_cells.append(f"[comment:{cell.old_comment}->{cell.new_comment}]")
+                    else:
+                        row_cells.append("")
+            table_rows.append(row_cells)
+
+        # Calculate column widths
+        all_rows = [col_headers] + table_rows
+        col_widths = [
+            max(len(row[i]) if i < len(row) else 0 for row in all_rows)
+            for i in range(len(col_headers))
+        ]
+
+        # Render table
+        lines.append(f"=== {sheet_name} ===")
+        lines.append("")
+
+        # Header
+        header_line = " | ".join(
+            col_headers[i].ljust(col_widths[i]) for i in range(len(col_headers))
+        )
+        lines.append(f"  {header_line}")
+
+        # Separator
+        sep_line = "-+-".join("-" * col_widths[i] for i in range(len(col_headers)))
+        lines.append(f"  {sep_line}")
+
+        # Data rows
+        for row_cells in table_rows:
+            data_line = " | ".join(
+                row_cells[i].ljust(col_widths[i]) if i < len(row_cells) else "".ljust(col_widths[i])
+                for i in range(len(col_headers))
+            )
+            lines.append(f"  {data_line}")
+
+        lines.append("")
+
+    # Summary
+    total = len(result.cells)
+    added = sum(1 for c in result.cells if c.status == "added")
+    removed = sum(1 for c in result.cells if c.status == "removed")
+    changed = sum(1 for c in result.cells if c.status == "changed")
+    lines.append(f"Summary: {total} cell diffs (+{added} -{removed} ~{changed})")
+
+    return "\n".join(lines)
+
+
+# ── CSV diff format ──────────────────────────────────────────────────
+
+
+def format_csv(result: DiffResult) -> str:
+    """Format a DiffResult as CSV.
+
+    Columns: status,sheet,row,col,old_value,new_value,old_comment,new_comment
+    """
+    import csv
+    import io
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    writer.writerow([
+        "status", "sheet", "row", "col",
+        "old_value", "new_value",
+        "old_comment", "new_comment",
+        "old_style", "new_style",
+    ])
+
+    for c in result.cells:
+        writer.writerow([
+            c.status,
+            c.sheet,
+            c.old_row or c.row,
+            c.col,
+            c.old_value or "",
+            c.new_value or "",
+            c.old_comment or "",
+            c.new_comment or "",
+            c.old_style or "",
+            c.new_style or "",
+        ])
+
+    # Domain diffs (registers)
+    for r in result.registers:
+        if r.status == "added":
+            writer.writerow([
+                "added", r.sheet, "", "",
+                "", f"REG:{r.new_name} indx={r.new_indx}",
+                "", "", "", "",
+            ])
+        elif r.status == "removed":
+            writer.writerow([
+                "removed", r.sheet, "", "",
+                f"REG:{r.old_name} indx={r.old_indx}", "",
+                "", "", "", "",
+            ])
+        elif r.status == "changed":
+            changes = _reg_changes(r)
+            change_str = "; ".join(f"{f}:{old}->{new}" for f, old, new in changes)
+            writer.writerow([
+                "changed", r.sheet, "", "",
+                f"REG:{r.old_name}", f"REG:{r.new_name} [{change_str}]",
+                "", "", "", "",
+            ])
+
+    return output.getvalue()

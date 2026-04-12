@@ -273,7 +273,9 @@ def memmap(db_path: Path):
 @click.option("--verbose", "-v", is_flag=True, default=False,
               help="Show detailed bit-field info for added registers")
 @click.option("--json", "as_json", is_flag=True, default=False,
-              help="Output as JSON")
+              help="Output as JSON (shortcut for --format json)")
+@click.option("--format", "fmt", type=click.Choice(["text", "json", "daff", "csv"]),
+              default=None, help="Output format (default: text)")
 @click.option("--domain", "include_domain", is_flag=True, default=False,
               help="Include domain-level diff (Register and MemoryMap models)")
 @click.option("--no-cells", is_flag=True, default=False,
@@ -295,7 +297,7 @@ def memmap(db_path: Path):
 @click.option("--no-db", is_flag=True, default=False,
               help="Do not save diff results to a SQLite DB")
 def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
-         as_json: bool, include_domain: bool, no_cells: bool,
+         as_json: bool, fmt: str | None, include_domain: bool, no_cells: bool,
          compare_comment: bool, compare_style: bool,
          compare_merge: bool, compare_all: bool, positional: bool,
          limit: int, output: Path | None, no_db: bool):
@@ -303,19 +305,25 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
 
     Accepts .db or .xlsx paths. If xlsx is given, auto-imports to DB first.
     By default, compares all cells using smart (sequence-based) diff.
-    Add --domain to include domain-level (Register/MemoryMap) comparison.
-    Add --comment, --style, --merge-info for deeper cell comparison.
-    Use --all to enable all comparisons at once.
-    Use --positional for legacy position-based diff.
+
+    \b
+    Output formats (--format):
+      text  — row-grouped human-readable (default)
+      json  — structured JSON
+      daff  — tabular diff with +++ / --- / -> markers
+      csv   — CSV with status,sheet,row,col,old_value,new_value,...
 
     \b
     Examples:
       dsm diff old.db new.db
-      dsm diff old.db new.db --domain
-      dsm diff old.db new.db --all
-      dsm diff old.db new.db --positional
+      dsm diff old.db new.db --format daff
+      dsm diff old.db new.db --format csv -o diff.csv
+      dsm diff old.db new.db --all --no-db
     """
-    from dsm.diff import diff_with_auto_import, format_diff, save_diff_to_db
+    from dsm.diff import (
+        diff_with_auto_import, format_csv, format_daff, format_diff,
+        save_diff_to_db,
+    )
 
     # --all enables everything
     if compare_all:
@@ -329,6 +337,16 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
     # smart is the default; --positional disables it
     smart = not positional
 
+    # Resolve output format: explicit --format > --json flag > --output extension > text
+    _EXT_FMT = {".json": "json", ".csv": "csv", ".daff": "daff"}
+    if fmt is None:
+        if as_json:
+            fmt = "json"
+        elif output and output.suffix in _EXT_FMT:
+            fmt = _EXT_FMT[output.suffix]
+        else:
+            fmt = "text"
+
     t0 = time.perf_counter()
     result = diff_with_auto_import(path_a, path_b, on_progress=click.echo,
                                     include_cells=include_cells,
@@ -339,10 +357,8 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
                                     smart=smart)
     elapsed = time.perf_counter() - t0
 
-    # Auto-detect JSON from --output extension
-    use_json = as_json or (output and output.suffix == ".json")
-
-    if use_json:
+    # Format output
+    if fmt == "json":
         import json
         from dsm.diff import _REG_FIELDS, _MEMMAP_FIELDS, _reg_changes, _mm_changes
 
@@ -405,6 +421,10 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
                 cell_list.append(entry)
             data["cell_diffs"] = cell_list
         output_text = json.dumps(data, indent=2, ensure_ascii=False)
+    elif fmt == "daff":
+        output_text = format_daff(result)
+    elif fmt == "csv":
+        output_text = format_csv(result)
     else:
         output_text = format_diff(result, verbose=verbose, limit=limit)
 
