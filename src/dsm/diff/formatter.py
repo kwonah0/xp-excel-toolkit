@@ -147,6 +147,22 @@ def format_diff(result: DiffResult, verbose: bool = False, limit: int = 0) -> st
                 lines.append(f"    ... and {len(groups) - limit} more rows")
             lines.append("")
 
+        moved_cells = [c for c in result.cells if c.status == "moved"]
+
+        if moved_cells:
+            groups = _group_by_row(moved_cells)
+            lines.append(f"  Moved ({len(moved_cells)} cells in {len(groups)} rows):")
+            shown = _limit_groups(groups, limit)
+            for (sheet, row_num), cells_in_row in shown.items():
+                # Find old_row from any cell in this group
+                old_r = cells_in_row[0].old_row
+                lines.append(f"    \u21c4 [{sheet}] R{old_r}\u2192R{row_num}:")
+                for c in sorted(cells_in_row, key=lambda x: x.col):
+                    lines.append(f"        C{c.col}: {c.old_value!r}")
+            if limit > 0 and len(groups) > limit:
+                lines.append(f"    ... and {len(groups) - limit} more rows")
+            lines.append("")
+
         if changed_cells:
             groups: dict[tuple[str, int, int | None], list[DiffCell]] = {}
             for c in changed_cells:
@@ -183,7 +199,11 @@ def format_diff(result: DiffResult, verbose: bool = False, limit: int = 0) -> st
         f"+{len(added_mm)} -{len(removed_mm)} ~{len(changed_mm)} memmap",
     ]
     if result.cells:
-        summary_parts.append(f"{len(result.cells)} cell diffs")
+        moved_count = sum(1 for c in result.cells if c.status == "moved")
+        parts = [f"{len(result.cells)} cell diffs"]
+        if moved_count:
+            parts.append(f"\u21c4{moved_count} moved")
+        summary_parts.append(" ".join(parts))
     lines.append(f"Summary: {', '.join(summary_parts)}")
 
     return "\n".join(lines)
@@ -240,10 +260,16 @@ def format_daff(result: DiffResult) -> str:
                 marker = "+++"
             elif status == "removed":
                 marker = "---"
+            elif status == "moved":
+                marker = ">>>"
             else:
                 marker = "->"
 
-            row_cells = [f"{marker} R{row_num}"]
+            if status == "moved":
+                old_r = next((c.old_row for c in rd["cols"].values() if c.old_row), None)
+                row_cells = [f"{marker} R{old_r}\u2192R{row_num}"]
+            else:
+                row_cells = [f"{marker} R{row_num}"]
             for col in sorted_cols:
                 cell = rd["cols"].get(col)
                 if cell is None:
@@ -251,6 +277,8 @@ def format_daff(result: DiffResult) -> str:
                 elif status == "added":
                     row_cells.append(cell.new_value or "")
                 elif status == "removed":
+                    row_cells.append(cell.old_value or "")
+                elif status == "moved":
                     row_cells.append(cell.old_value or "")
                 else:  # changed
                     old = cell.old_value or ""
@@ -299,7 +327,11 @@ def format_daff(result: DiffResult) -> str:
     added = sum(1 for c in result.cells if c.status == "added")
     removed = sum(1 for c in result.cells if c.status == "removed")
     changed = sum(1 for c in result.cells if c.status == "changed")
-    lines.append(f"Summary: {total} cell diffs (+{added} -{removed} ~{changed})")
+    moved = sum(1 for c in result.cells if c.status == "moved")
+    parts = [f"+{added} -{removed} ~{changed}"]
+    if moved:
+        parts.append(f"\u21c4{moved}")
+    lines.append(f"Summary: {total} cell diffs ({' '.join(parts)})")
 
     return "\n".join(lines)
 

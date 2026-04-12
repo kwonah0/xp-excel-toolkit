@@ -409,6 +409,10 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
                     "status": cd.status,
                     "old_value": cd.old_value, "new_value": cd.new_value,
                 }
+                if cd.old_row is not None:
+                    entry["old_row"] = cd.old_row
+                if cd.new_row is not None:
+                    entry["new_row"] = cd.new_row
                 if compare_comment:
                     entry["old_comment"] = cd.old_comment
                     entry["new_comment"] = cd.new_comment

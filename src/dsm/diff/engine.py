@@ -340,6 +340,100 @@ def _diff_cells_smart(
                             old_merge_range=None, new_merge_range=eb.get("merge_range"),
                         ))
 
+    # ── Post-process: detect moved rows ──
+    # If a removed row's signature matches an added row's signature,
+    # reclassify both as "moved".
+    removed_by_sig: dict[tuple, list[int]] = defaultdict(list)
+    added_by_sig: dict[tuple, list[int]] = defaultdict(list)
+
+    for i, d in enumerate(diffs):
+        if d.status == "removed" and d.old_row is not None:
+            sig = (d.sheet, d.old_row)
+            removed_by_sig[sig]  # ensure key exists
+        elif d.status == "added" and d.new_row is not None:
+            sig = (d.sheet, d.new_row)
+            added_by_sig[sig]
+
+    # Build row signatures from the diff cells themselves
+    removed_rows: dict[tuple[str, int], tuple] = {}  # (sheet, row) -> value_sig
+    added_rows: dict[tuple[str, int], tuple] = {}
+    for d in diffs:
+        if d.status == "removed" and d.old_row is not None:
+            key = (d.sheet, d.old_row)
+            if key not in removed_rows:
+                removed_rows[key] = {}
+            removed_rows[key][d.col] = d.old_value
+        elif d.status == "added" and d.new_row is not None:
+            key = (d.sheet, d.new_row)
+            if key not in added_rows:
+                added_rows[key] = {}
+            added_rows[key][d.col] = d.new_value
+
+    # Convert col dicts to comparable tuples
+    def _cols_to_sig(cols: dict) -> tuple:
+        if not cols:
+            return ()
+        max_col = max(cols)
+        return tuple(cols.get(c) for c in range(1, max_col + 1))
+
+    removed_sigs: dict[tuple[str, int], tuple] = {
+        k: _cols_to_sig(v) for k, v in removed_rows.items()
+    }
+    added_sigs: dict[tuple[str, int], tuple] = {
+        k: _cols_to_sig(v) for k, v in added_rows.items()
+    }
+
+    # Match: group by (sheet, signature) for lookup
+    added_by_sheet_sig: dict[tuple[str, tuple], list[tuple[str, int]]] = defaultdict(list)
+    for key, sig in added_sigs.items():
+        added_by_sheet_sig[(key[0], sig)].append(key)
+
+    moved_pairs: dict[tuple[str, int], int] = {}  # removed (sheet,row) -> new_row
+    used_added: set[tuple[str, int]] = set()
+
+    for rm_key, rm_sig in removed_sigs.items():
+        sheet = rm_key[0]
+        candidates = added_by_sheet_sig.get((sheet, rm_sig), [])
+        for add_key in candidates:
+            if add_key not in used_added:
+                moved_pairs[rm_key] = add_key[1]  # new row number
+                used_added.add(add_key)
+                break
+
+    # Reclassify matched cells
+    if moved_pairs:
+        for d in diffs:
+            if d.status == "removed" and d.old_row is not None:
+                rm_key = (d.sheet, d.old_row)
+                if rm_key in moved_pairs:
+                    d.status = "moved"
+                    d.new_row = moved_pairs[rm_key]
+                    d.new_value = d.old_value
+                    d.row = moved_pairs[rm_key]
+            elif d.status == "added" and d.new_row is not None:
+                add_key = (d.sheet, d.new_row)
+                if add_key in used_added:
+                    d.status = "moved"
+                    # Find the corresponding old row
+                    for rm_key, new_r in moved_pairs.items():
+                        if rm_key[0] == d.sheet and new_r == d.new_row:
+                            d.old_row = rm_key[1]
+                            d.old_value = d.new_value
+                            break
+
+        # Deduplicate: keep only the ones from the "removed" side (now "moved")
+        # Remove the duplicates from the "added" side
+        seen_moved: set[tuple] = set()
+        deduped: list[DiffCell] = []
+        for d in diffs:
+            if d.status == "moved":
+                key = (d.sheet, d.old_row, d.col)
+                if key in seen_moved:
+                    continue
+                seen_moved.add(key)
+            deduped.append(d)
+        diffs = deduped
+
     return diffs
 
 

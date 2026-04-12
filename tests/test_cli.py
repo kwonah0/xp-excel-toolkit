@@ -678,6 +678,70 @@ class TestFormulaRoundtrip:
         assert val.ref == "B1:B2"
         wb2.close()
 
+    def test_diff_moved_row_detection(self, tmp_path):
+        """Smart diff detects rows that moved position without content change."""
+        import openpyxl
+
+        # Create old xlsx: rows A, B, C
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "test"
+        ws["A1"], ws["B1"] = "Name", "Value"
+        ws["A2"], ws["B2"] = "REG_A", "10"
+        ws["A3"], ws["B3"] = "REG_B", "20"
+        ws["A4"], ws["B4"] = "REG_C", "30"
+        old_path = tmp_path / "old.xlsx"
+        wb.save(old_path)
+        wb.close()
+
+        # Create new xlsx: rows A, C, B (B and C swapped)
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "test"
+        ws["A1"], ws["B1"] = "Name", "Value"
+        ws["A2"], ws["B2"] = "REG_A", "10"
+        ws["A3"], ws["B3"] = "REG_C", "30"
+        ws["A4"], ws["B4"] = "REG_B", "20"
+        new_path = tmp_path / "new.xlsx"
+        wb.save(new_path)
+        wb.close()
+
+        # Import both
+        from dsm.models import init_db
+        from dsm.xlsx_parser import import_xlsx
+
+        db_old = tmp_path / "old.db"
+        db_new = tmp_path / "new.db"
+
+        S1 = init_db(f"sqlite:///{db_old}")
+        with S1() as s:
+            import_xlsx(s, old_path)
+            s.commit()
+
+        S2 = init_db(f"sqlite:///{db_new}")
+        with S2() as s:
+            import_xlsx(s, new_path)
+            s.commit()
+
+        # Run smart diff
+        from dsm.diff.engine import diff_databases
+        result = diff_databases(db_old, db_new, smart=True)
+
+        moved = [c for c in result.cells if c.status == "moved"]
+        assert len(moved) > 0, "Should detect moved rows"
+
+        # Verify moved cells have both old_row and new_row
+        for c in moved:
+            assert c.old_row is not None
+            assert c.new_row is not None
+            assert c.old_row != c.new_row
+
+        # Should not have any added/removed for the swapped rows
+        added = [c for c in result.cells if c.status == "added"]
+        removed = [c for c in result.cells if c.status == "removed"]
+        assert len(added) == 0, f"Unexpected added cells: {added}"
+        assert len(removed) == 0, f"Unexpected removed cells: {removed}"
+
     def test_import_uses_db_config(self, runner, work_dir, sample_xlsx):
         """Import reads sheet configs from DB when available."""
         db = work_dir / "cfg_import.db"
