@@ -6,3 +6,4 @@ dist/
 .venv/
 samples/
 __dsm_cache__/
+diff_*.csv
