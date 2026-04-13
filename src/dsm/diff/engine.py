@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import tempfile
+import hashlib
 from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
@@ -786,41 +786,25 @@ def diff_with_auto_import(
     needs_a = path_a.suffix in (".xlsx", ".xls")
     needs_b = path_b.suffix in (".xlsx", ".xls")
 
-    temp_files: list[Path] = []
-    try:
-        if needs_a and needs_b:
-            if on_progress:
-                on_progress(f"Auto-importing {path_a.name} and {path_b.name} in parallel...")
-            with ProcessPoolExecutor(max_workers=2) as pool:
-                fut_a = pool.submit(_resolve_db_worker, path_a, with_formulas)
-                fut_b = pool.submit(_resolve_db_worker, path_b, with_formulas)
-                db_a, temp_a = fut_a.result()
-                db_b, temp_b = fut_b.result()
-            if temp_a:
-                temp_files.append(db_a)
-            if temp_b:
-                temp_files.append(db_b)
-        else:
-            db_a, temp_a = _resolve_db(path_a, on_progress=on_progress, with_formulas=with_formulas)
-            db_b, temp_b = _resolve_db(path_b, on_progress=on_progress, with_formulas=with_formulas)
-            if temp_a:
-                temp_files.append(db_a)
-            if temp_b:
-                temp_files.append(db_b)
+    if needs_a and needs_b:
+        if on_progress:
+            on_progress(f"Resolving {path_a.name} and {path_b.name} in parallel...")
+        with ProcessPoolExecutor(max_workers=2) as pool:
+            fut_a = pool.submit(_resolve_db_worker, path_a, with_formulas)
+            fut_b = pool.submit(_resolve_db_worker, path_b, with_formulas)
+            db_a, _ = fut_a.result()
+            db_b, _ = fut_b.result()
+    else:
+        db_a, _ = _resolve_db(path_a, on_progress=on_progress, with_formulas=with_formulas)
+        db_b, _ = _resolve_db(path_b, on_progress=on_progress, with_formulas=with_formulas)
 
-        return diff_databases(db_a, db_b, on_progress=on_progress,
-                              include_cells=include_cells,
-                              include_domain=include_domain,
-                              compare_comment=compare_comment,
-                              compare_style=compare_style,
-                              compare_merge=compare_merge,
-                              smart=smart)
-    finally:
-        for tmp in temp_files:
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
+    return diff_databases(db_a, db_b, on_progress=on_progress,
+                          include_cells=include_cells,
+                          include_domain=include_domain,
+                          compare_comment=compare_comment,
+                          compare_style=compare_style,
+                          compare_merge=compare_merge,
+                          smart=smart)
 
 
 def _resolve_db_worker(path: Path, with_formulas: bool = False) -> tuple[Path, bool]:
@@ -828,31 +812,53 @@ def _resolve_db_worker(path: Path, with_formulas: bool = False) -> tuple[Path, b
     return _resolve_db(path, with_formulas=with_formulas)
 
 
+def _cache_key(path: Path) -> tuple[str, str]:
+    """Generate cache key (hash, mtime_str) from file path and mtime."""
+    abs_path = path.resolve()
+    mtime = abs_path.stat().st_mtime
+    raw = f"{abs_path}_{mtime}"
+    h = hashlib.sha256(raw.encode()).hexdigest()[:12]
+    mtime_str = datetime.fromtimestamp(mtime).strftime("%Y%m%d_%H%M%S")
+    return h, mtime_str
+
+
 def _resolve_db(
     path: Path,
     on_progress: Callable[[str], None] | None = None,
     with_formulas: bool = False,
 ) -> tuple[Path, bool]:
-    """If path is .xlsx, import to temp DB and return (DB path, is_temp).
+    """If path is .xlsx, import to cached DB and return (DB path, is_cached).
     If .db, return (path, False).
+    Cached DBs are stored in .dsm_cache/ in the current working directory.
     """
     if path.suffix == ".db":
         return path, False
 
     if path.suffix in (".xlsx", ".xls"):
-        # Import into a temporary DB
+        cache_dir = Path.cwd() / ".dsm_cache"
+        cache_dir.mkdir(exist_ok=True)
+
+        h, mtime_str = _cache_key(path)
+        cached_db = cache_dir / f"{path.stem}_{h}_{mtime_str}.db"
+
+        if cached_db.exists():
+            msg = f"Using cached DB for {path.name} ({cached_db.name})"
+            if on_progress:
+                on_progress(msg)
+            else:
+                print(msg)  # parallel worker has no callback
+            return cached_db, True
+
+        msg = f"Importing {path.name} into cache..."
         if on_progress:
-            on_progress(f"Auto-importing {path.name} into temp DB...")
+            on_progress(msg)
+        else:
+            print(msg)
         from dsm.xlsx_parser import import_xlsx
-        tmp = tempfile.NamedTemporaryFile(
-            suffix=".db", prefix=f"dsm_{path.stem}_", delete=False,
-        )
-        tmp.close()
-        tmp_path = Path(tmp.name)
-        Session = init_db(f"sqlite:///{tmp_path}")
+        Session = init_db(f"sqlite:///{cached_db}")
         with Session() as session:
             import_xlsx(session, path, on_progress=on_progress, with_formulas=with_formulas)
             session.commit()
-        return tmp_path, True
+        return cached_db, True
 
     raise ValueError(f"Unsupported file type: {path.suffix} (expected .db or .xlsx)")
