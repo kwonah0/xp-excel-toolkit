@@ -402,10 +402,11 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
             ],
         }
         if include_cells:
+            from dsm.diff.formatter import _col_letter
             cell_list = []
             for cd in result.cells:
                 entry = {
-                    "sheet": cd.sheet, "row": cd.row, "col": cd.col,
+                    "sheet": cd.sheet, "row": cd.row, "col": _col_letter(cd.col),
                     "status": cd.status,
                     "old_value": cd.old_value, "new_value": cd.new_value,
                 }

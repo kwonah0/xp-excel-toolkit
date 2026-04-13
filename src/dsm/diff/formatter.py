@@ -8,6 +8,15 @@ from dsm.diff.models import DiffCell, DiffMemmap, DiffRegister, DiffResult, _REG
 from dsm.diff.engine import _reg_changes, _mm_changes
 
 
+def _col_letter(col: int) -> str:
+    """Convert 1-based column number to Excel-style letter (1→A, 26→Z, 27→AA)."""
+    result = []
+    while col > 0:
+        col, rem = divmod(col - 1, 26)
+        result.append(chr(65 + rem))
+    return "".join(reversed(result))
+
+
 def format_diff(result: DiffResult, verbose: bool = False, limit: int = 0) -> str:
     """Format a DiffResult as a human-readable string.
 
@@ -130,7 +139,7 @@ def format_diff(result: DiffResult, verbose: bool = False, limit: int = 0) -> st
             for (sheet, row_num), cells_in_row in shown.items():
                 lines.append(f"    + [{sheet}] R{row_num}:")
                 for c in sorted(cells_in_row, key=lambda x: x.col):
-                    lines.append(f"        C{c.col}: {c.new_value!r}")
+                    lines.append(f"        {_col_letter(c.col)}: {c.new_value!r}")
             if limit > 0 and len(groups) > limit:
                 lines.append(f"    ... and {len(groups) - limit} more rows")
             lines.append("")
@@ -142,7 +151,7 @@ def format_diff(result: DiffResult, verbose: bool = False, limit: int = 0) -> st
             for (sheet, row_num), cells_in_row in shown.items():
                 lines.append(f"    - [{sheet}] R{row_num}:")
                 for c in sorted(cells_in_row, key=lambda x: x.col):
-                    lines.append(f"        C{c.col}: {c.old_value!r}")
+                    lines.append(f"        {_col_letter(c.col)}: {c.old_value!r}")
             if limit > 0 and len(groups) > limit:
                 lines.append(f"    ... and {len(groups) - limit} more rows")
             lines.append("")
@@ -158,7 +167,7 @@ def format_diff(result: DiffResult, verbose: bool = False, limit: int = 0) -> st
                 old_r = cells_in_row[0].old_row
                 lines.append(f"    \u21c4 [{sheet}] R{old_r}\u2192R{row_num}:")
                 for c in sorted(cells_in_row, key=lambda x: x.col):
-                    lines.append(f"        C{c.col}: {c.old_value!r}")
+                    lines.append(f"        {_col_letter(c.col)}: {c.old_value!r}")
             if limit > 0 and len(groups) > limit:
                 lines.append(f"    ... and {len(groups) - limit} more rows")
             lines.append("")
@@ -182,13 +191,13 @@ def format_diff(result: DiffResult, verbose: bool = False, limit: int = 0) -> st
                     lines.append(f"    ~ [{sheet}] R{row_num}:")
                 for c in sorted(groups[(sheet, row_num, old_r)], key=lambda x: x.col):
                     if c.old_value != c.new_value:
-                        lines.append(f"        C{c.col}: {c.old_value!r} -> {c.new_value!r}")
+                        lines.append(f"        {_col_letter(c.col)}: {c.old_value!r} -> {c.new_value!r}")
                     if c.old_comment != c.new_comment and (c.old_comment or c.new_comment):
-                        lines.append(f"        C{c.col} comment: {c.old_comment!r} -> {c.new_comment!r}")
+                        lines.append(f"        {_col_letter(c.col)} comment: {c.old_comment!r} -> {c.new_comment!r}")
                     if c.old_style != c.new_style and (c.old_style or c.new_style):
-                        lines.append(f"        C{c.col} style changed")
+                        lines.append(f"        {_col_letter(c.col)} style changed")
                     if c.old_merge_range != c.new_merge_range and (c.old_merge_range or c.new_merge_range):
-                        lines.append(f"        C{c.col} merge: {c.old_merge_range} -> {c.new_merge_range}")
+                        lines.append(f"        {_col_letter(c.col)} merge: {c.old_merge_range} -> {c.new_merge_range}")
             if limit > 0 and len(groups) > limit:
                 lines.append(f"    ... and {len(groups) - limit} more rows")
             lines.append("")
@@ -248,7 +257,7 @@ def format_daff(result: DiffResult) -> str:
         sorted_rows = sorted(row_data.keys())
 
         # Column headers
-        col_headers = [""] + [f"C{c}" for c in sorted_cols]
+        col_headers = [""] + [_col_letter(c) for c in sorted_cols]
 
         # Build table rows
         table_rows: list[list[str]] = []
@@ -342,7 +351,7 @@ def format_daff(result: DiffResult) -> str:
 def format_csv(result: DiffResult) -> str:
     """Format a DiffResult as CSV.
 
-    Columns: status,sheet,row,col,old_value,new_value,old_comment,new_comment
+    Columns: status,sheet,old_row,new_row,col,old_value,new_value,old_comment,new_comment
     """
     import csv
     import io
@@ -351,7 +360,7 @@ def format_csv(result: DiffResult) -> str:
     writer = csv.writer(output)
 
     writer.writerow([
-        "status", "sheet", "row", "col",
+        "status", "sheet", "old_row", "new_row", "col",
         "old_value", "new_value",
         "old_comment", "new_comment",
         "old_style", "new_style",
@@ -361,8 +370,9 @@ def format_csv(result: DiffResult) -> str:
         writer.writerow([
             c.status,
             c.sheet,
-            c.old_row or c.row,
-            c.col,
+            c.old_row or c.row or "",
+            c.new_row or c.row or "",
+            _col_letter(c.col),
             c.old_value or "",
             c.new_value or "",
             c.old_comment or "",
@@ -375,13 +385,13 @@ def format_csv(result: DiffResult) -> str:
     for r in result.registers:
         if r.status == "added":
             writer.writerow([
-                "added", r.sheet, "", "",
+                "added", r.sheet, "", "", "",
                 "", f"REG:{r.new_name} indx={r.new_indx}",
                 "", "", "", "",
             ])
         elif r.status == "removed":
             writer.writerow([
-                "removed", r.sheet, "", "",
+                "removed", r.sheet, "", "", "",
                 f"REG:{r.old_name} indx={r.old_indx}", "",
                 "", "", "", "",
             ])
@@ -389,7 +399,7 @@ def format_csv(result: DiffResult) -> str:
             changes = _reg_changes(r)
             change_str = "; ".join(f"{f}:{old}->{new}" for f, old, new in changes)
             writer.writerow([
-                "changed", r.sheet, "", "",
+                "changed", r.sheet, "", "", "",
                 f"REG:{r.old_name}", f"REG:{r.new_name} [{change_str}]",
                 "", "", "", "",
             ])
