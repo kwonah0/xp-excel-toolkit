@@ -239,7 +239,7 @@ class TestDiff:
         ])
 
         assert result.exit_code == 0, result.output
-        assert "Registers" in result.output or "Changed" in result.output
+        assert "registers" in result.output or "Summary" in result.output
 
     def test_diff_cells_default(self, runner, work_dir):
         """Default diff includes cell-level comparison."""
@@ -264,7 +264,7 @@ class TestDiff:
         ])
 
         assert result.exit_code == 0, result.output
-        assert "Cells" in result.output or "cell diffs" in result.output
+        assert "cells" in result.output or "Summary" in result.output
         assert (work_dir / "diff_cells.db").exists()
 
         # Verify diff_cell table has rows
@@ -333,7 +333,7 @@ class TestDiff:
             "--db", str(work_dir / "diff_comment.db"),
         ])
         assert result.exit_code == 0, result.output
-        assert "Cells" in result.output or "cell diffs" in result.output
+        assert "cells" in result.output or "Summary" in result.output
 
     def test_diff_all_flag(self, runner, work_dir):
         """--all flag enables all comparisons (cells + domain + comment + style + merge)."""
@@ -361,7 +361,7 @@ class TestDiff:
         ])
 
         assert result.exit_code == 0, result.output
-        assert "Registers" in result.output or "Changed" in result.output
+        assert "registers" in result.output or "Summary" in result.output
 
     def test_diff_smart_row_insert(self, runner, work_dir):
         """Smart diff correctly identifies row insertion without cascade."""
@@ -473,7 +473,7 @@ class TestDiff:
         ])
 
         assert result.exit_code == 0, result.output
-        assert "Changed" in result.output or "cell diffs" in result.output
+        assert "cells" in result.output or "Summary" in result.output
 
 
 # ── dsm merge (stack) ─────────────────────────────────────────────────

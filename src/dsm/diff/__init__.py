@@ -19,7 +19,7 @@ from dsm.diff.engine import (
     diff_with_auto_import,
     save_diff_to_db,
 )
-from dsm.diff.formatter import format_csv, format_daff, format_diff
+from dsm.diff.formatter import format_csv, format_daff, format_diff, format_summary
 
 __all__ = [
     "DiffBase",
@@ -38,6 +38,7 @@ __all__ = [
     "format_csv",
     "format_daff",
     "format_diff",
+    "format_summary",
     "init_diff_db",
     "save_diff_to_db",
 ]

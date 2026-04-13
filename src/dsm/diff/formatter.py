@@ -210,20 +210,53 @@ def format_diff(result: DiffResult, verbose: bool = False, limit: int = 0) -> st
                 lines.append(f"    ... and {len(groups) - limit} more rows")
             lines.append("")
 
-    # Summary
-    summary_parts = [
-        f"+{len(added_regs)} -{len(removed_regs)} ~{len(changed_regs)} registers",
-        f"+{len(added_mm)} -{len(removed_mm)} ~{len(changed_mm)} memmap",
-    ]
-    if result.cells:
-        moved_count = sum(1 for c in result.cells if c.status == "moved")
-        parts = [f"{len(result.cells)} cell diffs"]
-        if moved_count:
-            parts.append(f"\u21c4{moved_count} moved")
-        summary_parts.append(" ".join(parts))
-    lines.append(f"Summary: {', '.join(summary_parts)}")
+    lines.append(format_summary(result))
 
     return "\n".join(lines)
+
+
+def format_summary(result: DiffResult) -> str:
+    """Return a one-line summary of diff counts."""
+    added_regs = result._filter_regs("added")
+    removed_regs = result._filter_regs("removed")
+    changed_regs = result._filter_regs("changed")
+    added_mm = result._filter_mm("added")
+    removed_mm = result._filter_mm("removed")
+    changed_mm = result._filter_mm("changed")
+
+    parts: list[str] = []
+
+    # Cells
+    if result.cells:
+        added = sum(1 for c in result.cells if c.status == "added")
+        removed = sum(1 for c in result.cells if c.status == "removed")
+        changed = sum(1 for c in result.cells if c.status == "changed")
+        moved = sum(1 for c in result.cells if c.status == "moved")
+        cell_parts = []
+        if added:
+            cell_parts.append(f"+{added}")
+        if removed:
+            cell_parts.append(f"-{removed}")
+        if changed:
+            cell_parts.append(f"~{changed}")
+        if moved:
+            cell_parts.append(f"\u21c4{moved}")
+        if cell_parts:
+            parts.append(f"{' '.join(cell_parts)} cells")
+        else:
+            parts.append("0 cell diffs")
+
+    # Domain models
+    reg_total = len(added_regs) + len(removed_regs) + len(changed_regs)
+    mm_total = len(added_mm) + len(removed_mm) + len(changed_mm)
+    if reg_total:
+        parts.append(f"+{len(added_regs)} -{len(removed_regs)} ~{len(changed_regs)} registers")
+    if mm_total:
+        parts.append(f"+{len(added_mm)} -{len(removed_mm)} ~{len(changed_mm)} memmap")
+
+    if not parts:
+        return "No differences found."
+    return f"Summary: {', '.join(parts)}"
 
 
 # ── Daff tabular diff format ──────────────────────────────────────────

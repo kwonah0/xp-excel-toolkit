@@ -299,22 +299,30 @@ def memmap(db_path: Path):
 @click.option("--limit", type=int, default=0,
               help="Max items per category in output (0 = show all, default: 0)")
 @click.option("--output", "-o", type=click.Path(path_type=Path), default=None,
-              help="Save diff output to file (format auto-detected from extension: .json, .txt)")
+              help="Override auto-generated CSV filename (format auto-detected from extension)")
+@click.option("--no-file", is_flag=True, default=False,
+              help="Do not generate output file (stdout only)")
 @click.option("--save-db", is_flag=True, default=False,
               help="Save diff results to a SQLite DB file")
 def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
          as_json: bool, fmt: str | None, include_domain: bool, no_cells: bool,
          compare_comment: bool, compare_style: bool,
          compare_merge: bool, compare_all: bool, positional: bool,
-         with_formulas: bool, limit: int, output: Path | None, save_db: bool):
+         with_formulas: bool, limit: int, output: Path | None,
+         no_file: bool, save_db: bool):
     """Compare two register map DBs or xlsx files.
 
     Accepts .db or .xlsx paths. If xlsx is given, auto-imports to DB first.
     By default, compares all cells using smart (sequence-based) diff.
 
     \b
+    Output: auto-generates a CSV file (diff_{stem}_{datetime}.csv) and
+    prints a summary to stdout. Use -o to override filename, --no-file
+    to skip file generation.
+
+    \b
     Output formats (--format):
-      text  — row-grouped human-readable (default)
+      text  — row-grouped human-readable (full output to stdout, no auto CSV)
       json  — structured JSON
       daff  — tabular diff with +++ / --- / -> markers
       csv   — CSV with status,sheet,row,col,old_value,new_value,...
@@ -322,14 +330,15 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
     \b
     Examples:
       dsm diff old.db new.db
-      dsm diff old.db new.db --format daff
-      dsm diff old.db new.db --format csv -o diff.csv
+      dsm diff old.db new.db -o result.csv
+      dsm diff old.db new.db --no-file
+      dsm diff old.db new.db --format text
       dsm diff old.db new.db --all
       dsm diff old.db new.db --save-db
     """
     from dsm.diff import (
         diff_with_auto_import, format_csv, format_daff, format_diff,
-        save_diff_to_db,
+        format_summary, save_diff_to_db,
     )
 
     # --all enables everything
@@ -344,15 +353,16 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
     # smart is the default; --positional disables it
     smart = not positional
 
-    # Resolve output format: explicit --format > --json flag > --output extension > text
-    _EXT_FMT = {".json": "json", ".csv": "csv", ".daff": "daff"}
+    # Resolve output format
+    _EXT_FMT = {".json": "json", ".csv": "csv", ".daff": "daff", ".txt": "text"}
+    explicit_format = fmt is not None or as_json
     if fmt is None:
         if as_json:
             fmt = "json"
         elif output and output.suffix in _EXT_FMT:
             fmt = _EXT_FMT[output.suffix]
         else:
-            fmt = "text"
+            fmt = "csv"  # default file format is CSV
 
     t0 = time.perf_counter()
     result = diff_with_auto_import(path_a, path_b, on_progress=click.echo,
@@ -365,91 +375,111 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
                                     with_formulas=with_formulas)
     elapsed = time.perf_counter() - t0
 
-    # Format output
-    if fmt == "json":
-        import json
-        from dsm.diff import _REG_FIELDS, _MEMMAP_FIELDS, _reg_changes, _mm_changes
+    def _format_output(chosen_fmt: str) -> str:
+        if chosen_fmt == "json":
+            import json
+            from dsm.diff import _REG_FIELDS, _MEMMAP_FIELDS, _reg_changes, _mm_changes
 
-        def _reg_to_json(r, side: str) -> dict:
-            return {f: getattr(r, f"{side}_{f}") for f in _REG_FIELDS}
+            def _reg_to_json(r, side: str) -> dict:
+                return {f: getattr(r, f"{side}_{f}") for f in _REG_FIELDS}
 
-        def _mm_to_json(m, side: str) -> dict:
-            return {f: getattr(m, f"{side}_{f}") for f in _MEMMAP_FIELDS}
+            def _mm_to_json(m, side: str) -> dict:
+                return {f: getattr(m, f"{side}_{f}") for f in _MEMMAP_FIELDS}
 
-        data = {
-            "added_registers": [
-                {"sheet": r.sheet, **_reg_to_json(r, "new")}
-                for r in result._filter_regs("added")
-            ],
-            "removed_registers": [
-                {"sheet": r.sheet, **_reg_to_json(r, "old")}
-                for r in result._filter_regs("removed")
-            ],
-            "changed_registers": [
-                {
-                    "sheet": dr.sheet, "ip": dr.new_name,
-                    "indx": dr.new_indx, "page": dr.new_page, "para": dr.new_para,
-                    "changes": [
-                        {"field": f, "old": old, "new": new}
-                        for f, old, new in _reg_changes(dr)
-                    ],
-                }
-                for dr in result._filter_regs("changed")
-            ],
-            "added_memmap": [_mm_to_json(m, "new") for m in result._filter_mm("added")],
-            "removed_memmap": [_mm_to_json(m, "old") for m in result._filter_mm("removed")],
-            "changed_memmap": [
-                {
-                    **_mm_to_json(dm, "old"),
-                    "changes": {
-                        f: {"old": old, "new": new}
-                        for f, old, new in _mm_changes(dm)
-                    },
-                }
-                for dm in result._filter_mm("changed")
-            ],
-        }
-        if include_cells:
-            from dsm.diff.formatter import _col_letter
-            cell_list = []
-            for cd in result.cells:
-                entry = {
-                    "sheet": cd.sheet, "row": cd.row, "col": _col_letter(cd.col),
-                    "status": cd.status,
-                    "old_value": cd.old_value, "new_value": cd.new_value,
-                }
-                if cd.old_row is not None:
-                    entry["old_row"] = cd.old_row
-                if cd.new_row is not None:
-                    entry["new_row"] = cd.new_row
-                if compare_comment:
-                    entry["old_comment"] = cd.old_comment
-                    entry["new_comment"] = cd.new_comment
-                if compare_style:
-                    entry["old_style"] = cd.old_style
-                    entry["new_style"] = cd.new_style
-                if compare_merge:
-                    entry["old_merge_range"] = cd.old_merge_range
-                    entry["new_merge_range"] = cd.new_merge_range
-                if cd.old_formula or cd.new_formula:
-                    entry["old_formula"] = cd.old_formula
-                    entry["new_formula"] = cd.new_formula
-                cell_list.append(entry)
-            data["cell_diffs"] = cell_list
-        output_text = json.dumps(data, indent=2, ensure_ascii=False)
-    elif fmt == "daff":
-        output_text = format_daff(result)
-    elif fmt == "csv":
-        output_text = format_csv(result)
+            data = {
+                "added_registers": [
+                    {"sheet": r.sheet, **_reg_to_json(r, "new")}
+                    for r in result._filter_regs("added")
+                ],
+                "removed_registers": [
+                    {"sheet": r.sheet, **_reg_to_json(r, "old")}
+                    for r in result._filter_regs("removed")
+                ],
+                "changed_registers": [
+                    {
+                        "sheet": dr.sheet, "ip": dr.new_name,
+                        "indx": dr.new_indx, "page": dr.new_page, "para": dr.new_para,
+                        "changes": [
+                            {"field": f, "old": old, "new": new}
+                            for f, old, new in _reg_changes(dr)
+                        ],
+                    }
+                    for dr in result._filter_regs("changed")
+                ],
+                "added_memmap": [_mm_to_json(m, "new") for m in result._filter_mm("added")],
+                "removed_memmap": [_mm_to_json(m, "old") for m in result._filter_mm("removed")],
+                "changed_memmap": [
+                    {
+                        **_mm_to_json(dm, "old"),
+                        "changes": {
+                            f: {"old": old, "new": new}
+                            for f, old, new in _mm_changes(dm)
+                        },
+                    }
+                    for dm in result._filter_mm("changed")
+                ],
+            }
+            if include_cells:
+                from dsm.diff.formatter import _col_letter
+                cell_list = []
+                for cd in result.cells:
+                    entry = {
+                        "sheet": cd.sheet, "row": cd.row, "col": _col_letter(cd.col),
+                        "status": cd.status,
+                        "old_value": cd.old_value, "new_value": cd.new_value,
+                    }
+                    if cd.old_row is not None:
+                        entry["old_row"] = cd.old_row
+                    if cd.new_row is not None:
+                        entry["new_row"] = cd.new_row
+                    if compare_comment:
+                        entry["old_comment"] = cd.old_comment
+                        entry["new_comment"] = cd.new_comment
+                    if compare_style:
+                        entry["old_style"] = cd.old_style
+                        entry["new_style"] = cd.new_style
+                    if compare_merge:
+                        entry["old_merge_range"] = cd.old_merge_range
+                        entry["new_merge_range"] = cd.new_merge_range
+                    if cd.old_formula or cd.new_formula:
+                        entry["old_formula"] = cd.old_formula
+                        entry["new_formula"] = cd.new_formula
+                    cell_list.append(entry)
+                data["cell_diffs"] = cell_list
+            return json.dumps(data, indent=2, ensure_ascii=False)
+        elif chosen_fmt == "daff":
+            return format_daff(result)
+        elif chosen_fmt == "csv":
+            return format_csv(result)
+        else:
+            return format_diff(result, verbose=verbose, limit=limit)
+
+    # When --format text is explicit: full output to stdout, no auto file
+    if explicit_format and fmt == "text":
+        output_text = _format_output("text")
+        if output:
+            output.write_text(output_text, encoding="utf-8")
+            click.echo(f"Saved to {output}")
+        else:
+            click.echo(output_text)
     else:
-        output_text = format_diff(result, verbose=verbose, limit=limit)
+        # Default: auto-generate file + summary to stdout
+        output_text = _format_output(fmt)
 
-    # Output: file or stdout
-    if output:
-        output.write_text(output_text, encoding="utf-8")
-        click.echo(f"Diff output saved to {output}")
-    else:
-        click.echo(output_text)
+        if not no_file:
+            if output:
+                out_path = output
+            else:
+                # Auto-generate: diff_{stem}_{datetime}.csv (or matching ext)
+                from datetime import datetime
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                ext = {"csv": ".csv", "json": ".json", "daff": ".daff"}.get(fmt, ".csv")
+                out_path = Path(f"diff_{path_a.stem}_{ts}{ext}")
+            out_path.write_text(output_text, encoding="utf-8")
+            click.echo(f"Saved to {out_path}")
+
+        # Always print summary to stdout
+        click.echo(format_summary(result))
 
     # Save to DB (only with --save-db or --db)
     if save_db or diff_db_path is not None:
