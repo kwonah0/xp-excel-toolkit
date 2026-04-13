@@ -273,7 +273,7 @@ def memmap(db_path: Path):
 @click.argument("path_a", type=click.Path(exists=True, path_type=Path))
 @click.argument("path_b", type=click.Path(exists=True, path_type=Path))
 @click.option("--db", "diff_db_path", type=click.Path(path_type=Path), default=None,
-              help="Save diff results to SQLite DB (default: diff_<a>_<b>.db)")
+              help="Save diff results to SQLite DB (path, implies --save-db)")
 @click.option("--verbose", "-v", is_flag=True, default=False,
               help="Show detailed bit-field info for added registers")
 @click.option("--json", "as_json", is_flag=True, default=False,
@@ -300,13 +300,13 @@ def memmap(db_path: Path):
               help="Max items per category in output (0 = show all, default: 0)")
 @click.option("--output", "-o", type=click.Path(path_type=Path), default=None,
               help="Save diff output to file (format auto-detected from extension: .json, .txt)")
-@click.option("--no-db", is_flag=True, default=False,
-              help="Do not save diff results to a SQLite DB")
+@click.option("--save-db", is_flag=True, default=False,
+              help="Save diff results to a SQLite DB file")
 def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
          as_json: bool, fmt: str | None, include_domain: bool, no_cells: bool,
          compare_comment: bool, compare_style: bool,
          compare_merge: bool, compare_all: bool, positional: bool,
-         with_formulas: bool, limit: int, output: Path | None, no_db: bool):
+         with_formulas: bool, limit: int, output: Path | None, save_db: bool):
     """Compare two register map DBs or xlsx files.
 
     Accepts .db or .xlsx paths. If xlsx is given, auto-imports to DB first.
@@ -324,7 +324,8 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
       dsm diff old.db new.db
       dsm diff old.db new.db --format daff
       dsm diff old.db new.db --format csv -o diff.csv
-      dsm diff old.db new.db --all --no-db
+      dsm diff old.db new.db --all
+      dsm diff old.db new.db --save-db
     """
     from dsm.diff import (
         diff_with_auto_import, format_csv, format_daff, format_diff,
@@ -450,8 +451,8 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
     else:
         click.echo(output_text)
 
-    # Save to DB (unless --no-db)
-    if not no_db:
+    # Save to DB (only with --save-db or --db)
+    if save_db or diff_db_path is not None:
         if diff_db_path is None:
             diff_db_path = Path(f"diff_{path_a.stem}_{path_b.stem}.db")
         save_diff_to_db(result, diff_db_path, path_a, path_b)

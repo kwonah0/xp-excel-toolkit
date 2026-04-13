@@ -102,5 +102,5 @@ moved,level2_IP_B,8,3,B,0x20,0x20,,,,,,
 | `--style` | 스타일 비교 활성화 (old_style/new_style 채워짐) |
 | `--merge` | 병합 셀 비교 활성화 |
 | `--positional` | 위치 기반 비교 (smart diff 비활성화, moved 감지 안 됨) |
-| `--no-db` | diff DB 생성 생략 |
+| `--save-db` | diff 결과를 SQLite DB로 저장 (기본: 저장 안 함) |
 | `--limit N` | 출력 행 수 제한 (CSV에는 적용 안 됨) |
