@@ -512,7 +512,7 @@ def _do_patch_merge(input_dir: Path, output: Path | None, base: Path):
     from dsm.patcher import patch_merge
 
     click.echo(f"Resolving base: {base}")
-    db_path = _resolve_db(base, on_progress=click.echo)
+    db_path, _is_temp = _resolve_db(base, on_progress=click.echo)
 
     if output is None:
         output = input_dir.parent / f"{input_dir.name}_patched.xlsx"

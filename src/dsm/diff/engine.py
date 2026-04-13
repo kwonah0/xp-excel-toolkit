@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
@@ -780,32 +781,49 @@ def diff_with_auto_import(
 
     If an xlsx is given, it is imported into a temp DB first.
     When both inputs need import, they are imported in parallel.
+    Temp DBs are cleaned up after diff completes.
     """
-    needs_a = path_a.suffix in (".xlsx", ".xls") and not path_a.with_suffix(".db").exists()
-    needs_b = path_b.suffix in (".xlsx", ".xls") and not path_b.with_suffix(".db").exists()
+    needs_a = path_a.suffix in (".xlsx", ".xls")
+    needs_b = path_b.suffix in (".xlsx", ".xls")
 
-    if needs_a and needs_b:
-        if on_progress:
-            on_progress(f"Auto-importing {path_a.name} and {path_b.name} in parallel...")
-        with ProcessPoolExecutor(max_workers=2) as pool:
-            fut_a = pool.submit(_resolve_db_worker, path_a, with_formulas)
-            fut_b = pool.submit(_resolve_db_worker, path_b, with_formulas)
-            db_a = fut_a.result()
-            db_b = fut_b.result()
-    else:
-        db_a = _resolve_db(path_a, on_progress=on_progress, with_formulas=with_formulas)
-        db_b = _resolve_db(path_b, on_progress=on_progress, with_formulas=with_formulas)
+    temp_files: list[Path] = []
+    try:
+        if needs_a and needs_b:
+            if on_progress:
+                on_progress(f"Auto-importing {path_a.name} and {path_b.name} in parallel...")
+            with ProcessPoolExecutor(max_workers=2) as pool:
+                fut_a = pool.submit(_resolve_db_worker, path_a, with_formulas)
+                fut_b = pool.submit(_resolve_db_worker, path_b, with_formulas)
+                db_a, temp_a = fut_a.result()
+                db_b, temp_b = fut_b.result()
+            if temp_a:
+                temp_files.append(db_a)
+            if temp_b:
+                temp_files.append(db_b)
+        else:
+            db_a, temp_a = _resolve_db(path_a, on_progress=on_progress, with_formulas=with_formulas)
+            db_b, temp_b = _resolve_db(path_b, on_progress=on_progress, with_formulas=with_formulas)
+            if temp_a:
+                temp_files.append(db_a)
+            if temp_b:
+                temp_files.append(db_b)
 
-    return diff_databases(db_a, db_b, on_progress=on_progress,
-                          include_cells=include_cells,
-                          include_domain=include_domain,
-                          compare_comment=compare_comment,
-                          compare_style=compare_style,
-                          compare_merge=compare_merge,
-                          smart=smart)
+        return diff_databases(db_a, db_b, on_progress=on_progress,
+                              include_cells=include_cells,
+                              include_domain=include_domain,
+                              compare_comment=compare_comment,
+                              compare_style=compare_style,
+                              compare_merge=compare_merge,
+                              smart=smart)
+    finally:
+        for tmp in temp_files:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
-def _resolve_db_worker(path: Path, with_formulas: bool = False) -> Path:
+def _resolve_db_worker(path: Path, with_formulas: bool = False) -> tuple[Path, bool]:
     """Pickle-safe version of _resolve_db for multiprocessing (no callbacks)."""
     return _resolve_db(path, with_formulas=with_formulas)
 
@@ -814,29 +832,27 @@ def _resolve_db(
     path: Path,
     on_progress: Callable[[str], None] | None = None,
     with_formulas: bool = False,
-) -> Path:
-    """If path is .xlsx, import to temp DB and return DB path.
-    If .db, return as-is.
+) -> tuple[Path, bool]:
+    """If path is .xlsx, import to temp DB and return (DB path, is_temp).
+    If .db, return (path, False).
     """
     if path.suffix == ".db":
-        return path
+        return path, False
 
     if path.suffix in (".xlsx", ".xls"):
-        # Check if a companion .db already exists
-        companion_db = path.with_suffix(".db")
-        if companion_db.exists():
-            if on_progress:
-                on_progress(f"Reusing existing DB: {companion_db.name}")
-            return companion_db
-
-        # Import into a new DB next to the xlsx
+        # Import into a temporary DB
         if on_progress:
-            on_progress(f"Auto-importing {path.name} into DB...")
+            on_progress(f"Auto-importing {path.name} into temp DB...")
         from dsm.xlsx_parser import import_xlsx
-        Session = init_db(f"sqlite:///{companion_db}")
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".db", prefix=f"dsm_{path.stem}_", delete=False,
+        )
+        tmp.close()
+        tmp_path = Path(tmp.name)
+        Session = init_db(f"sqlite:///{tmp_path}")
         with Session() as session:
             import_xlsx(session, path, on_progress=on_progress, with_formulas=with_formulas)
             session.commit()
-        return companion_db
+        return tmp_path, True
 
     raise ValueError(f"Unsupported file type: {path.suffix} (expected .db or .xlsx)")
