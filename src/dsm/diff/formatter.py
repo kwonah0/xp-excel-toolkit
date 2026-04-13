@@ -348,10 +348,25 @@ def format_daff(result: DiffResult) -> str:
 # ── CSV diff format ──────────────────────────────────────────────────
 
 
+def _escape_csv_formula(val: str) -> str:
+    """Escape values that spreadsheet apps would interpret as formulas.
+
+    LibreOffice/Excel treat cells starting with =, +, -, @, tab, CR
+    as formulas or special commands. Prefix with a single-quote so the
+    value is treated as a literal string.
+    """
+    if val and val[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + val
+    return val
+
+
 def format_csv(result: DiffResult) -> str:
     """Format a DiffResult as CSV.
 
     Columns: status,sheet,old_row,new_row,col,old_value,new_value,old_comment,new_comment
+
+    Values starting with =, +, -, @ are prefixed with ' to prevent
+    spreadsheet apps from interpreting them as formulas.
     """
     import csv
     import io
@@ -373,10 +388,10 @@ def format_csv(result: DiffResult) -> str:
             c.old_row or c.row or "",
             c.new_row or c.row or "",
             _col_letter(c.col),
-            c.old_value or "",
-            c.new_value or "",
-            c.old_comment or "",
-            c.new_comment or "",
+            _escape_csv_formula(c.old_value or ""),
+            _escape_csv_formula(c.new_value or ""),
+            _escape_csv_formula(c.old_comment or ""),
+            _escape_csv_formula(c.new_comment or ""),
             c.old_style or "",
             c.new_style or "",
         ])
