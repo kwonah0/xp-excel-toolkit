@@ -8,10 +8,9 @@ from sqlalchemy.orm import (
 )
 
 
-# Fields to compare (exclude internal tracking fields)
-_REG_FIELDS = ["type", "indx", "page", "para", "name",
-               "d7", "d6", "d5", "d4", "d3", "d2", "d1", "d0", "init"]
-_MEMMAP_FIELDS = ["baseaddr", "group", "midgroup", "comment", "special"]
+# Fields to compare (imported from domain models — kept as aliases for convenience)
+from dsm.domain_models import REGMAP_FIELDS as _REG_FIELDS  # noqa: E402
+from dsm.domain_models import MEMMAP_FIELDS as _MEMMAP_FIELDS  # noqa: E402
 
 
 # ── Diff DB models ────────────────────────────────────────────────

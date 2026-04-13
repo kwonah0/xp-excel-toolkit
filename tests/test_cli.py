@@ -590,7 +590,7 @@ class TestConfig:
         # Reset
         result = runner.invoke(main, ["config", "reset", "--db", str(db)])
         assert result.exit_code == 0, result.output
-        assert "Reset to 2 default" in result.output
+        assert "Reset to 3 default" in result.output
 
         # Verify custom is gone, defaults remain
         result = runner.invoke(main, ["config", "list", "--db", str(db)])

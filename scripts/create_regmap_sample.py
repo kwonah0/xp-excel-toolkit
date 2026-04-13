@@ -324,6 +324,58 @@ def _populate_memorymap(ws, styles: dict):
     ws.freeze_panes = "A2"
 
 
+# -- Overview data ---------------------------------------------------------
+OVERVIEW_DATA = [
+    # (col_A, col_B, col_C)
+    ("#General Option", None, "Comment"),
+    ("chip_name", "SENSOR_IC_V2", "Top-level chip identifier"),
+    ("version", "2.1.0", "Specification version"),
+    ("author", "design_team", None),
+    ("date", "2025-01-15", "Last modified date"),
+    ("#clock_gating", "enabled", "This option is commented out"),
+    (None, None, None),  # empty row
+    ("#Multi-resolution", None, None),
+    ("base_resolution", "1024", "Base address resolution in bytes"),
+    ("page_size", "256", None),
+    ("max_pages", "4", "Maximum number of pages per index"),
+    ("#extended_mode", "true", "Experimental feature, disabled"),
+    (None, None, None),  # empty row
+    ("#Power Management", None, "Power domain settings"),
+    ("default_voltage", "1.8", "Default supply voltage (V)"),
+    ("sleep_mode", "deep", "deep | light | standby"),
+    ("wakeup_source", "timer", "timer | gpio | i2c"),
+    ("retention", "true", "Enable register retention in sleep"),
+]
+
+
+def _populate_overview(ws, styles: dict):
+    """Populate the overview worksheet with dict-like key-value data."""
+    data_font = styles["data_font"]
+    thin_border = styles["thin_border"]
+    header_font = styles["header_font"]
+    header_fill = styles["header_fill"]
+
+    for idx, (a, b, c) in enumerate(OVERVIEW_DATA):
+        row = idx + 1
+        cell_a = ws.cell(row=row, column=1, value=a)
+        cell_b = ws.cell(row=row, column=2, value=b)
+        cell_c = ws.cell(row=row, column=3, value=c)
+
+        for cell in (cell_a, cell_b, cell_c):
+            cell.font = data_font
+            cell.border = thin_border
+
+        # Highlight category rows
+        if a and a.startswith("#") and b is None:
+            cell_a.font = header_font
+            cell_a.fill = header_fill
+
+    # Column widths
+    ws.column_dimensions["A"].width = 22
+    ws.column_dimensions["B"].width = 20
+    ws.column_dimensions["C"].width = 40
+
+
 def create_regmap_xlsx() -> Path:
     """Create register map sample .xlsx with color-coded bit fields."""
     OUTPUT_DIR.mkdir(exist_ok=True)
@@ -356,6 +408,10 @@ def create_regmap_xlsx() -> Path:
     # -- memorymap sheet ----------------------------------------------------
     ws_mm = wb.create_sheet(title="memorymap")
     _populate_memorymap(ws_mm, styles)
+
+    # -- overview sheet -----------------------------------------------------
+    ws_ov = wb.create_sheet(title="overview")
+    _populate_overview(ws_ov, styles)
 
     wb.save(path)
     wb.close()

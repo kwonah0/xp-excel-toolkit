@@ -94,6 +94,7 @@ class SheetConfigEntry(Base):
     domain_type: Mapped[str | None] = mapped_column(Text)   # "register" or "memorymap_entry"
     field_map_json: Mapped[str | None] = mapped_column(Text)  # JSON: {"TYPE": "type", ...}
     header_row: Mapped[int | None] = mapped_column(default=None)
+    parser_func_ref: Mapped[str | None] = mapped_column(Text)  # "module:func" for custom parsers
 
 
 # ── DB setup helper ─────────────────────────────────────────────────

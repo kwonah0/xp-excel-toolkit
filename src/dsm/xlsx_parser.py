@@ -42,6 +42,9 @@ def _extract_cell_value(value: Any) -> tuple[str | None, str | None, str | None]
 class SheetConfig:
     """Per-sheet import configuration: which domain model and field mapping to use.
 
+    For flat-table sheets (level2_*, memorymap), use ``field_map`` + ``domain_cls``.
+    For custom layouts (overview), provide ``parser_func`` instead.
+
     Example usage::
 
         sheet_configs = {
@@ -49,9 +52,9 @@ class SheetConfig:
                 field_map=REGMAP_FIELD_MAP,
                 domain_cls=Register,
             ),
-            "memorymap": SheetConfig(
-                field_map=MEMMAP_FIELD_MAP,
-                domain_cls=MemoryMapEntry,
+            "overview": SheetConfig(
+                domain_cls=OverviewEntry,
+                parser_func=parse_overview_entries,
             ),
         }
         sheets = import_xlsx(session, path, sheet_configs=sheet_configs)
@@ -59,6 +62,7 @@ class SheetConfig:
     field_map: dict[str, str] | None = None
     domain_cls: type | None = None
     header_row: int | None = None
+    parser_func: Callable[..., None] | None = None
 
 
 def extract_style(cell: Cell) -> dict | None:
@@ -152,6 +156,7 @@ def _import_ws(
     field_map: dict[str, str] | None = None,
     domain_cls: type | None = None,
     column_map: dict[str, int] | None = None,
+    parser_func: Callable[..., None] | None = None,
 ) -> ExcelSheet:
     """Core: import a single openpyxl worksheet into the DB.
 
@@ -230,7 +235,14 @@ def _import_ws(
             session.execute(insert(ExcelCell), cell_dicts[i:i + _BULK_CHUNK])
         session.flush()
 
-    # -- Header detection + domain object creation (Core bulk insert) -------
+    # -- Domain object creation ------------------------------------------------
+    # Custom parser takes priority over flat-table field_map logic.
+    if parser_func is not None:
+        parser_func(session, ws, sid)
+        session.flush()
+        return sheet_obj
+
+    # -- Header detection + flat-table domain object creation (Core bulk insert)
     if header_row is None:
         header_row = find_header_row(ws, field_map=field_map)
     sheet_obj.header_row = header_row
@@ -383,6 +395,7 @@ def import_xlsx(
             header_row=config.header_row if config else None,
             field_map=config.field_map if config else None,
             domain_cls=config.domain_cls if config else None,
+            parser_func=config.parser_func if config else None,
         )
         sheets.append(sheet_obj)
 
@@ -425,6 +438,16 @@ def import_xlsx(
     return sheets
 
 
+def _resolve_parser_func(ref: str) -> Callable[..., None] | None:
+    """Resolve a 'module:func' string to a callable."""
+    if not ref:
+        return None
+    import importlib
+    module_path, func_name = ref.rsplit(":", 1)
+    mod = importlib.import_module(module_path)
+    return getattr(mod, func_name)
+
+
 def _load_configs_from_db(session: Session) -> dict[str, SheetConfig]:
     """Load SheetConfigEntry rows from DB and convert to SheetConfig dict.
 
@@ -445,9 +468,11 @@ def _load_configs_from_db(session: Session) -> dict[str, SheetConfig]:
             field_map = FIELD_MAP_REGISTRY.get(entry.domain_type)
         else:
             field_map = None
+        pfunc = _resolve_parser_func(entry.parser_func_ref) if entry.parser_func_ref else None
         configs[entry.pattern] = SheetConfig(
             field_map=field_map,
             domain_cls=domain_cls,
             header_row=entry.header_row,
+            parser_func=pfunc,
         )
     return configs
