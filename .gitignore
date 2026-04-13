@@ -5,4 +5,4 @@ __pycache__/
 dist/
 .venv/
 samples/
-.dsm_cache/
+__dsm_cache__/

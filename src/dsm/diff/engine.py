@@ -829,13 +829,13 @@ def _resolve_db(
 ) -> tuple[Path, bool]:
     """If path is .xlsx, import to cached DB and return (DB path, is_cached).
     If .db, return (path, False).
-    Cached DBs are stored in .dsm_cache/ in the current working directory.
+    Cached DBs are stored in __dsm_cache__/ in the current working directory.
     """
     if path.suffix == ".db":
         return path, False
 
     if path.suffix in (".xlsx", ".xls"):
-        cache_dir = Path.cwd() / ".dsm_cache"
+        cache_dir = Path.cwd() / "__dsm_cache__"
         cache_dir.mkdir(exist_ok=True)
 
         h, mtime_str = _cache_key(path)
