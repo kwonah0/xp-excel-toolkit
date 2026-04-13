@@ -333,41 +333,22 @@ def import_xlsx(
     *,
     sheet_configs: dict[str, SheetConfig] | None = None,
     on_progress: Callable[[str], None] | None = None,
-    with_values: bool = False,
+    with_formulas: bool = False,
 ) -> list[ExcelSheet]:
     """Import all sheets from a .xlsx file.
 
-    Opens the file once, creates a single ExcelWorkbook record, and imports
-    every sheet. Each sheet is matched against sheet_configs by name
-    (supports fnmatch patterns like ``"level2_*"``).
+    By default, loads with data_only=True so raw_value contains calculated
+    results. With ``with_formulas=True``, also loads formulas (data_only=False)
+    and stores formula strings in raw_value with cached results in cached_value.
 
     Args:
         session: SQLAlchemy session.
         path: Path to .xlsx file.
         sheet_configs: Mapping of sheet name pattern -> SheetConfig.
-            Sheets without a matching config are still imported as raw
-            cells (no domain objects).
+        with_formulas: If True, store formula strings (loads workbook twice).
 
     Returns:
         List of created ExcelSheet ORM objects, one per sheet.
-
-    Example::
-
-        from dsm import (
-            SheetConfig, REGMAP_FIELD_MAP, Register,
-            MEMMAP_FIELD_MAP, MemoryMapEntry,
-        )
-
-        sheets = import_xlsx(session, "regmap.xlsx", sheet_configs={
-            "level2_*": SheetConfig(
-                field_map=REGMAP_FIELD_MAP,
-                domain_cls=Register,
-            ),
-            "memorymap": SheetConfig(
-                field_map=MEMMAP_FIELD_MAP,
-                domain_cls=MemoryMapEntry,
-            ),
-        })
     """
     path = Path(path)
     blob = path.read_bytes()
@@ -375,9 +356,16 @@ def import_xlsx(
     if sheet_configs is None:
         sheet_configs = _load_configs_from_db(session)
 
-    if on_progress:
-        on_progress(f"Loading workbook: {path.name}")
-    wb_xl = openpyxl.load_workbook(path, data_only=False)
+    if with_formulas:
+        # Load formulas first (data_only=False), then overlay cached values
+        if on_progress:
+            on_progress(f"Loading workbook (formulas): {path.name}")
+        wb_xl = openpyxl.load_workbook(path, data_only=False)
+    else:
+        # Default: load calculated values only
+        if on_progress:
+            on_progress(f"Loading workbook: {path.name}")
+        wb_xl = openpyxl.load_workbook(path, data_only=True)
 
     wb_obj = ExcelWorkbook(filename=path.name, blob=blob)
     session.add(wb_obj)
@@ -400,14 +388,14 @@ def import_xlsx(
 
     wb_xl.close()
 
-    # -- Optional: load cached formula values via data_only=True -----------
-    if with_values:
+    # -- with_formulas: load cached values and store in cached_value --------
+    if with_formulas:
         if on_progress:
             on_progress("Loading cached formula values (data_only=True)...")
         wb_val = openpyxl.load_workbook(path, data_only=True)
+        from sqlalchemy import update
         for sheet_obj in sheets:
             ws_val = wb_val[sheet_obj.name]
-            # Build lookup: (row, col) -> cached value string
             cached: dict[tuple[int, int], str] = {}
             for row in ws_val.iter_rows(
                 min_row=1,
@@ -418,8 +406,6 @@ def import_xlsx(
                     if cell.value is not None:
                         cached[(cell.row, cell.column)] = str(cell.value)
             if cached:
-                # Bulk update cells that have formulas
-                from sqlalchemy import update
                 for (r, c), val in cached.items():
                     session.execute(
                         update(ExcelCell)

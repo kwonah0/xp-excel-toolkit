@@ -113,6 +113,9 @@ class DiffCell(DiffBase):
     # Merge range diff (e.g. "R1C1:R3C5", populated when compare_merge=True)
     old_merge_range: Mapped[str | None] = mapped_column(Text)
     new_merge_range: Mapped[str | None] = mapped_column(Text)
+    # Formula strings (populated when source DB has cached_value, i.e. --with-formulas import)
+    old_formula: Mapped[str | None] = mapped_column(Text)
+    new_formula: Mapped[str | None] = mapped_column(Text)
 
 
 def init_diff_db(db_url: str) -> sessionmaker:

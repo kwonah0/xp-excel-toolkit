@@ -139,7 +139,10 @@ def format_diff(result: DiffResult, verbose: bool = False, limit: int = 0) -> st
             for (sheet, row_num), cells_in_row in shown.items():
                 lines.append(f"    + [{sheet}] R{row_num}:")
                 for c in sorted(cells_in_row, key=lambda x: x.col):
-                    lines.append(f"        {_col_letter(c.col)}: {c.new_value!r}")
+                    val = f"{c.new_value!r}"
+                    if c.new_formula:
+                        val += f" [{c.new_formula}]"
+                    lines.append(f"        {_col_letter(c.col)}: {val}")
             if limit > 0 and len(groups) > limit:
                 lines.append(f"    ... and {len(groups) - limit} more rows")
             lines.append("")
@@ -151,7 +154,10 @@ def format_diff(result: DiffResult, verbose: bool = False, limit: int = 0) -> st
             for (sheet, row_num), cells_in_row in shown.items():
                 lines.append(f"    - [{sheet}] R{row_num}:")
                 for c in sorted(cells_in_row, key=lambda x: x.col):
-                    lines.append(f"        {_col_letter(c.col)}: {c.old_value!r}")
+                    val = f"{c.old_value!r}"
+                    if c.old_formula:
+                        val += f" [{c.old_formula}]"
+                    lines.append(f"        {_col_letter(c.col)}: {val}")
             if limit > 0 and len(groups) > limit:
                 lines.append(f"    ... and {len(groups) - limit} more rows")
             lines.append("")
@@ -192,6 +198,8 @@ def format_diff(result: DiffResult, verbose: bool = False, limit: int = 0) -> st
                 for c in sorted(groups[(sheet, row_num, old_r)], key=lambda x: x.col):
                     if c.old_value != c.new_value:
                         lines.append(f"        {_col_letter(c.col)}: {c.old_value!r} -> {c.new_value!r}")
+                    if c.old_formula != c.new_formula and (c.old_formula or c.new_formula):
+                        lines.append(f"        {_col_letter(c.col)} formula: {c.old_formula!r} -> {c.new_formula!r}")
                     if c.old_comment != c.new_comment and (c.old_comment or c.new_comment):
                         lines.append(f"        {_col_letter(c.col)} comment: {c.old_comment!r} -> {c.new_comment!r}")
                     if c.old_style != c.new_style and (c.old_style or c.new_style):
@@ -377,6 +385,7 @@ def format_csv(result: DiffResult) -> str:
     writer.writerow([
         "status", "sheet", "old_row", "new_row", "col",
         "old_value", "new_value",
+        "old_formula", "new_formula",
         "old_comment", "new_comment",
         "old_style", "new_style",
     ])
@@ -390,6 +399,8 @@ def format_csv(result: DiffResult) -> str:
             _col_letter(c.col),
             _escape_csv_formula(c.old_value or ""),
             _escape_csv_formula(c.new_value or ""),
+            _escape_csv_formula(c.old_formula or ""),
+            _escape_csv_formula(c.new_formula or ""),
             _escape_csv_formula(c.old_comment or ""),
             _escape_csv_formula(c.new_comment or ""),
             c.old_style or "",
@@ -402,13 +413,13 @@ def format_csv(result: DiffResult) -> str:
             writer.writerow([
                 "added", r.sheet, "", "", "",
                 "", f"REG:{r.new_name} indx={r.new_indx}",
-                "", "", "", "",
+                "", "", "", "", "", "",
             ])
         elif r.status == "removed":
             writer.writerow([
                 "removed", r.sheet, "", "", "",
                 f"REG:{r.old_name} indx={r.old_indx}", "",
-                "", "", "", "",
+                "", "", "", "", "", "",
             ])
         elif r.status == "changed":
             changes = _reg_changes(r)
@@ -416,7 +427,7 @@ def format_csv(result: DiffResult) -> str:
             writer.writerow([
                 "changed", r.sheet, "", "", "",
                 f"REG:{r.old_name}", f"REG:{r.new_name} [{change_str}]",
-                "", "", "", "",
+                "", "", "", "", "", "",
             ])
 
     return output.getvalue()

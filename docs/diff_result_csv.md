@@ -24,8 +24,10 @@ dsm diff old.xlsx new.xlsx -o diff_result.csv
 | `old_row` | int | 이전 파일의 행 번호 |
 | `new_row` | int | 새 파일의 행 번호 |
 | `col` | string | Excel 스타일 컬럼 문자 (A, B, ..., Z, AA, AB, ...) |
-| `old_value` | string | 이전 셀 값 |
-| `new_value` | string | 새 셀 값 |
+| `old_value` | string | 이전 셀 값 (결과값) |
+| `new_value` | string | 새 셀 값 (결과값) |
+| `old_formula` | string | 이전 수식 (`--with-formulas`로 import 시) |
+| `new_formula` | string | 새 수식 (`--with-formulas`로 import 시) |
 | `old_comment` | string | 이전 코멘트 (`--comment` 사용 시) |
 | `new_comment` | string | 새 코멘트 (`--comment` 사용 시) |
 | `old_style` | string | 이전 스타일 JSON (`--style` 사용 시) |
@@ -82,18 +84,20 @@ changed,Sheet1,,,,"REG:MY_REG","REG:MY_REG [init:0x00->0xFF]",...
 ## 전체 예시
 
 ```csv
-status,sheet,old_row,new_row,col,old_value,new_value,old_comment,new_comment,old_style,new_style
-changed,level2_IP_A,10,10,D,RW,RO,,,,
-added,level2_IP_A,,12,A,,NEW_FIELD,,,,
-removed,level2_IP_B,5,,B,OLD_VAL,,,,
-moved,level2_IP_B,8,3,A,REG_X,REG_X,,,,
-moved,level2_IP_B,8,3,B,0x20,0x20,,,,
+status,sheet,old_row,new_row,col,old_value,new_value,old_formula,new_formula,old_comment,new_comment,old_style,new_style
+changed,level2_IP_A,10,10,D,RW,RO,,,,,,
+changed,level2_IP_A,10,10,E,150,165,'=SUM(A1:A10),'=SUM(A1:A11),,,,
+added,level2_IP_A,,12,A,,NEW_FIELD,,,,,,
+removed,level2_IP_B,5,,B,OLD_VAL,,,,,,,
+moved,level2_IP_B,8,3,A,REG_X,REG_X,,,,,,
+moved,level2_IP_B,8,3,B,0x20,0x20,,,,,,
 ```
 
 ## 관련 옵션
 
 | 옵션 | 설명 |
 |------|------|
+| `--with-formulas` | 수식 포함 import + diff 시 수식 표시 (old_formula/new_formula 채워짐) |
 | `--comment` | 코멘트 비교 활성화 (old_comment/new_comment 채워짐) |
 | `--style` | 스타일 비교 활성화 (old_style/new_style 채워짐) |
 | `--merge` | 병합 셀 비교 활성화 |

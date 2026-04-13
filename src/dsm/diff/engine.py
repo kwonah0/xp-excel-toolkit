@@ -123,13 +123,25 @@ def _load_cells_by_sheet(
     return result
 
 
+def _cell_display_value(cell: ExcelCell) -> str | None:
+    """Return effective display value: cached_value (formula result) if available, else raw_value."""
+    return cell.cached_value if cell.cached_value is not None else cell.raw_value
+
+
+def _cell_formula(cell: ExcelCell) -> str | None:
+    """Return formula string if cell has one (indicated by cached_value existing)."""
+    if cell.cached_value is not None and cell.raw_value and str(cell.raw_value).startswith("="):
+        return cell.raw_value
+    return None
+
+
 def _row_signature(cols: dict[int, ExcelCell]) -> tuple:
     """Convert a row's cells into a hashable tuple for SequenceMatcher."""
     if not cols:
         return ()
     max_col = max(cols)
     return tuple(
-        (cols[c].raw_value if c in cols else None)
+        (_cell_display_value(cols[c]) if c in cols else None)
         for c in range(1, max_col + 1)
     )
 
@@ -170,6 +182,7 @@ def _diff_cells_smart(
             extras["style"] = _json.dumps(cell.style, ensure_ascii=False) if cell.style else None
         if compare_merge:
             extras["merge_range"] = merges.get(cell.merge_id) if cell.merge_id else None
+        extras["formula"] = _cell_formula(cell)
         return extras
 
     for sheet in all_sheets:
@@ -211,10 +224,11 @@ def _diff_cells_smart(
                                 status="changed", sheet=sheet,
                                 row=new_row_num, col=col,
                                 old_row=old_row_num, new_row=new_row_num,
-                                old_value=ca.raw_value, new_value=cb.raw_value,
+                                old_value=_cell_display_value(ca), new_value=_cell_display_value(cb),
                                 old_comment=ea.get("comment"), new_comment=eb.get("comment"),
                                 old_style=ea.get("style"), new_style=eb.get("style"),
                                 old_merge_range=ea.get("merge_range"), new_merge_range=eb.get("merge_range"),
+                                old_formula=ea.get("formula"), new_formula=eb.get("formula"),
                             ))
                 continue
 
@@ -228,10 +242,11 @@ def _diff_cells_smart(
                             status="removed", sheet=sheet,
                             row=old_row_num, col=col,
                             old_row=old_row_num, new_row=None,
-                            old_value=ca.raw_value, new_value=None,
+                            old_value=_cell_display_value(ca), new_value=None,
                             old_comment=ea.get("comment"), new_comment=None,
                             old_style=ea.get("style"), new_style=None,
                             old_merge_range=ea.get("merge_range"), new_merge_range=None,
+                            old_formula=ea.get("formula"), new_formula=None,
                         ))
 
             elif tag == "insert":
@@ -244,10 +259,11 @@ def _diff_cells_smart(
                             status="added", sheet=sheet,
                             row=new_row_num, col=col,
                             old_row=None, new_row=new_row_num,
-                            old_value=None, new_value=cb.raw_value,
+                            old_value=None, new_value=_cell_display_value(cb),
                             old_comment=None, new_comment=eb.get("comment"),
                             old_style=None, new_style=eb.get("style"),
                             old_merge_range=None, new_merge_range=eb.get("merge_range"),
+                            old_formula=None, new_formula=eb.get("formula"),
                         ))
 
             elif tag == "replace":
@@ -272,10 +288,11 @@ def _diff_cells_smart(
                                 status="added", sheet=sheet,
                                 row=new_row_num, col=col,
                                 old_row=old_row_num, new_row=new_row_num,
-                                old_value=None, new_value=cb.raw_value,
+                                old_value=None, new_value=_cell_display_value(cb),
                                 old_comment=None, new_comment=eb.get("comment"),
                                 old_style=None, new_style=eb.get("style"),
                                 old_merge_range=None, new_merge_range=eb.get("merge_range"),
+                                old_formula=None, new_formula=eb.get("formula"),
                             ))
                         elif ca is not None and cb is None:
                             ea = _cell_extras(ca, merges_a)
@@ -283,14 +300,15 @@ def _diff_cells_smart(
                                 status="removed", sheet=sheet,
                                 row=old_row_num, col=col,
                                 old_row=old_row_num, new_row=new_row_num,
-                                old_value=ca.raw_value, new_value=None,
+                                old_value=_cell_display_value(ca), new_value=None,
                                 old_comment=ea.get("comment"), new_comment=None,
                                 old_style=ea.get("style"), new_style=None,
                                 old_merge_range=ea.get("merge_range"), new_merge_range=None,
+                                old_formula=ea.get("formula"), new_formula=None,
                             ))
                         elif ca is not None and cb is not None:
                             # Both exist — check for changes
-                            val_diff = ca.raw_value != cb.raw_value
+                            val_diff = _cell_display_value(ca) != _cell_display_value(cb)
                             comment_diff = compare_comment and ca.comment != cb.comment
                             style_diff = compare_style and ca.style != cb.style
                             mr_a = merges_a.get(ca.merge_id) if (compare_merge and ca.merge_id) else None
@@ -304,10 +322,11 @@ def _diff_cells_smart(
                                     status="changed", sheet=sheet,
                                     row=new_row_num, col=col,
                                     old_row=old_row_num, new_row=new_row_num,
-                                    old_value=ca.raw_value, new_value=cb.raw_value,
+                                    old_value=_cell_display_value(ca), new_value=_cell_display_value(cb),
                                     old_comment=ea.get("comment"), new_comment=eb.get("comment"),
                                     old_style=ea.get("style"), new_style=eb.get("style"),
                                     old_merge_range=ea.get("merge_range"), new_merge_range=eb.get("merge_range"),
+                                    old_formula=ea.get("formula"), new_formula=eb.get("formula"),
                                 ))
 
                 # Extra old rows (deleted)
@@ -319,10 +338,11 @@ def _diff_cells_smart(
                             status="removed", sheet=sheet,
                             row=old_row_num, col=col,
                             old_row=old_row_num, new_row=None,
-                            old_value=ca.raw_value, new_value=None,
+                            old_value=_cell_display_value(ca), new_value=None,
                             old_comment=ea.get("comment"), new_comment=None,
                             old_style=ea.get("style"), new_style=None,
                             old_merge_range=ea.get("merge_range"), new_merge_range=None,
+                            old_formula=ea.get("formula"), new_formula=None,
                         ))
 
                 # Extra new rows (added)
@@ -334,10 +354,11 @@ def _diff_cells_smart(
                             status="added", sheet=sheet,
                             row=new_row_num, col=col,
                             old_row=None, new_row=new_row_num,
-                            old_value=None, new_value=cb.raw_value,
+                            old_value=None, new_value=_cell_display_value(cb),
                             old_comment=None, new_comment=eb.get("comment"),
                             old_style=None, new_style=eb.get("style"),
                             old_merge_range=None, new_merge_range=eb.get("merge_range"),
+                            old_formula=None, new_formula=eb.get("formula"),
                         ))
 
     # ── Post-process: detect moved rows ──
@@ -409,6 +430,7 @@ def _diff_cells_smart(
                     d.status = "moved"
                     d.new_row = moved_pairs[rm_key]
                     d.new_value = d.old_value
+                    d.new_formula = d.old_formula
                     d.row = moved_pairs[rm_key]
             elif d.status == "added" and d.new_row is not None:
                 add_key = (d.sheet, d.new_row)
@@ -419,6 +441,7 @@ def _diff_cells_smart(
                         if rm_key[0] == d.sheet and new_r == d.new_row:
                             d.old_row = rm_key[1]
                             d.old_value = d.new_value
+                            d.old_formula = d.new_formula
                             break
 
         # Deduplicate: keep only the ones from the "removed" side (now "moved")
@@ -610,6 +633,7 @@ def diff_databases(
                         extras["style"] = _json.dumps(cell.style, ensure_ascii=False) if cell.style else None
                     if compare_merge:
                         extras["merge_range"] = merges.get(cell.merge_id) if cell.merge_id else None
+                    extras["formula"] = _cell_formula(cell)
                     return extras
 
                 # Added cells
@@ -619,10 +643,11 @@ def diff_databases(
                     result.cells.append(DiffCell(
                         status="added",
                         sheet=key[0], row=key[1], col=key[2],
-                        old_value=None, new_value=cb.raw_value,
+                        old_value=None, new_value=_cell_display_value(cb),
                         old_comment=None, new_comment=eb.get("comment"),
                         old_style=None, new_style=eb.get("style"),
                         old_merge_range=None, new_merge_range=eb.get("merge_range"),
+                        old_formula=None, new_formula=eb.get("formula"),
                     ))
 
                 # Removed cells
@@ -632,10 +657,11 @@ def diff_databases(
                     result.cells.append(DiffCell(
                         status="removed",
                         sheet=key[0], row=key[1], col=key[2],
-                        old_value=ca.raw_value, new_value=None,
+                        old_value=_cell_display_value(ca), new_value=None,
                         old_comment=ea.get("comment"), new_comment=None,
                         old_style=ea.get("style"), new_style=None,
                         old_merge_range=ea.get("merge_range"), new_merge_range=None,
+                        old_formula=ea.get("formula"), new_formula=None,
                     ))
 
                 # Changed cells
@@ -643,7 +669,7 @@ def diff_databases(
                     ca, cb = cells_a[key], cells_b[key]
 
                     # Check what changed
-                    val_diff = ca.raw_value != cb.raw_value
+                    val_diff = _cell_display_value(ca) != _cell_display_value(cb)
                     comment_diff = compare_comment and ca.comment != cb.comment
                     style_diff = compare_style and ca.style != cb.style
                     merge_a = merges_a.get(ca.merge_id) if (compare_merge and ca.merge_id) else None
@@ -656,10 +682,11 @@ def diff_databases(
                         result.cells.append(DiffCell(
                             status="changed",
                             sheet=key[0], row=key[1], col=key[2],
-                            old_value=ca.raw_value, new_value=cb.raw_value,
+                            old_value=_cell_display_value(ca), new_value=_cell_display_value(cb),
                             old_comment=ea.get("comment"), new_comment=eb.get("comment"),
                             old_style=ea.get("style"), new_style=eb.get("style"),
                             old_merge_range=ea.get("merge_range"), new_merge_range=eb.get("merge_range"),
+                            old_formula=ea.get("formula"), new_formula=eb.get("formula"),
                         ))
 
             if on_progress:
@@ -747,6 +774,7 @@ def diff_with_auto_import(
     compare_style: bool = False,
     compare_merge: bool = False,
     smart: bool = True,
+    with_formulas: bool = False,
 ) -> DiffResult:
     """Diff two paths that can be .db or .xlsx files.
 
@@ -760,13 +788,13 @@ def diff_with_auto_import(
         if on_progress:
             on_progress(f"Auto-importing {path_a.name} and {path_b.name} in parallel...")
         with ProcessPoolExecutor(max_workers=2) as pool:
-            fut_a = pool.submit(_resolve_db_worker, path_a)
-            fut_b = pool.submit(_resolve_db_worker, path_b)
+            fut_a = pool.submit(_resolve_db_worker, path_a, with_formulas)
+            fut_b = pool.submit(_resolve_db_worker, path_b, with_formulas)
             db_a = fut_a.result()
             db_b = fut_b.result()
     else:
-        db_a = _resolve_db(path_a, on_progress=on_progress)
-        db_b = _resolve_db(path_b, on_progress=on_progress)
+        db_a = _resolve_db(path_a, on_progress=on_progress, with_formulas=with_formulas)
+        db_b = _resolve_db(path_b, on_progress=on_progress, with_formulas=with_formulas)
 
     return diff_databases(db_a, db_b, on_progress=on_progress,
                           include_cells=include_cells,
@@ -777,14 +805,15 @@ def diff_with_auto_import(
                           smart=smart)
 
 
-def _resolve_db_worker(path: Path) -> Path:
+def _resolve_db_worker(path: Path, with_formulas: bool = False) -> Path:
     """Pickle-safe version of _resolve_db for multiprocessing (no callbacks)."""
-    return _resolve_db(path)
+    return _resolve_db(path, with_formulas=with_formulas)
 
 
 def _resolve_db(
     path: Path,
     on_progress: Callable[[str], None] | None = None,
+    with_formulas: bool = False,
 ) -> Path:
     """If path is .xlsx, import to temp DB and return DB path.
     If .db, return as-is.
@@ -806,7 +835,7 @@ def _resolve_db(
         from dsm.xlsx_parser import import_xlsx
         Session = init_db(f"sqlite:///{companion_db}")
         with Session() as session:
-            import_xlsx(session, path, on_progress=on_progress)
+            import_xlsx(session, path, on_progress=on_progress, with_formulas=with_formulas)
             session.commit()
         return companion_db
 

@@ -626,7 +626,7 @@ class TestFormulaRoundtrip:
         db_path = tmp_path / "formulas.db"
         Session = init_db(f"sqlite:///{db_path}")
         with Session() as session:
-            import_xlsx(session, xlsx_path)
+            import_xlsx(session, xlsx_path, with_formulas=True)
             session.commit()
 
             # Verify formula_type and formula_ref stored
@@ -662,7 +662,7 @@ class TestFormulaRoundtrip:
         db_path = tmp_path / "formulas.db"
         Session = init_db(f"sqlite:///{db_path}")
         with Session() as session:
-            import_xlsx(session, xlsx_path)
+            import_xlsx(session, xlsx_path, with_formulas=True)
             session.commit()
 
             sheet = session.query(ExcelSheet).first()
