@@ -363,6 +363,12 @@ def import_xlsx(
         List of created ExcelSheet ORM objects, one per sheet.
     """
     path = Path(path)
+
+    # Validate file format before reading
+    if path.suffix.lower() == ".xlsx":
+        from dsm.convert import validate_xlsx_format
+        validate_xlsx_format(path)
+
     blob = path.read_bytes()
 
     if sheet_configs is None:

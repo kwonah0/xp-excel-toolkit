@@ -170,13 +170,42 @@ def _xls_cache_key(xls_path: Path) -> tuple[str, str]:
     return h, mtime_str
 
 
+def validate_xlsx_format(path: Path) -> None:
+    """Check that a .xlsx file is actually a valid ZIP (OOXML) file.
+
+    Detects the common mistake of renaming a binary .xls file to .xlsx.
+
+    Raises:
+        ValueError: If the file is a binary .xls disguised as .xlsx.
+    """
+    _OLE2_MAGIC = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"
+    _ZIP_MAGIC = b"PK"
+
+    with open(path, "rb") as f:
+        header = f.read(8)
+
+    if header[:8] == _OLE2_MAGIC:
+        raise ValueError(
+            f"{path.name} is a binary .xls file renamed to .xlsx.\n"
+            f"  Use the original .xls extension — DSM will auto-convert via LibreOffice.\n"
+            f"  Or convert manually: libreoffice --headless --convert-to xlsx '{path}'"
+        )
+
+    if header[:2] != _ZIP_MAGIC:
+        raise ValueError(
+            f"{path.name} is not a valid .xlsx file (expected ZIP/OOXML format).\n"
+            f"  File header: {header[:4].hex()}"
+        )
+
+
 def ensure_xlsx_cached(
     path: Path,
     on_progress=None,
 ) -> Path:
     """If path is .xls, convert to .xlsx and cache in __dsm_cache__/.
 
-    If path is already .xlsx, return it as-is.
+    If path is already .xlsx, validates it is a real OOXML file (not a
+    renamed binary .xls).
     Cached .xlsx files are reused when the source .xls has not been modified.
 
     Args:
@@ -187,6 +216,7 @@ def ensure_xlsx_cached(
         Path to the .xlsx file (original or cached conversion).
     """
     if path.suffix.lower() != ".xls":
+        validate_xlsx_format(path)
         return path
 
     cache_dir = Path.cwd() / _CACHE_DIR_NAME
