@@ -822,19 +822,30 @@ def _cache_key(path: Path) -> tuple[str, str]:
     return h, mtime_str
 
 
+def _ensure_xlsx(path: Path, on_progress: Callable[[str], None] | None = None) -> Path:
+    """If path is .xls, convert to .xlsx via LibreOffice (cached in __dsm_cache__/)."""
+    from dsm.convert import ensure_xlsx_cached
+    return ensure_xlsx_cached(path, on_progress=on_progress)
+
+
 def _resolve_db(
     path: Path,
     on_progress: Callable[[str], None] | None = None,
     with_formulas: bool = False,
 ) -> tuple[Path, bool]:
-    """If path is .xlsx, import to cached DB and return (DB path, is_cached).
+    """If path is .xlsx/.xls, import to cached DB and return (DB path, is_cached).
     If .db, return (path, False).
+    .xls files are auto-converted to .xlsx via LibreOffice before import.
     Cached DBs are stored in __dsm_cache__/ in the current working directory.
     """
     if path.suffix == ".db":
         return path, False
 
-    if path.suffix in (".xlsx", ".xls"):
+    if path.suffix.lower() in (".xlsx", ".xls"):
+        # Convert .xls → .xlsx if needed
+        xlsx_path = _ensure_xlsx(path, on_progress)
+
+        # Cache key uses the original path (for .xls) so re-runs detect same file
         cache_dir = Path.cwd() / "__dsm_cache__"
         cache_dir.mkdir(exist_ok=True)
 
@@ -849,7 +860,7 @@ def _resolve_db(
                 print(msg)  # parallel worker has no callback
             return cached_db, True
 
-        msg = f"Importing {path.name} into cache..."
+        msg = f"Importing {xlsx_path.name} into cache..."
         if on_progress:
             on_progress(msg)
         else:
@@ -857,8 +868,8 @@ def _resolve_db(
         from dsm.xlsx_parser import import_xlsx
         Session = init_db(f"sqlite:///{cached_db}")
         with Session() as session:
-            import_xlsx(session, path, on_progress=on_progress, with_formulas=with_formulas)
+            import_xlsx(session, xlsx_path, on_progress=on_progress, with_formulas=with_formulas)
             session.commit()
         return cached_db, True
 
-    raise ValueError(f"Unsupported file type: {path.suffix} (expected .db or .xlsx)")
+    raise ValueError(f"Unsupported file type: {path.suffix} (expected .db, .xlsx, or .xls)")

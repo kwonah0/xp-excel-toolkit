@@ -24,7 +24,15 @@ def main():
 
 # -- import -----------------------------------------------------------------
 
+def _ensure_xlsx(path: Path) -> Path:
+    """If path is .xls, convert to .xlsx using LibreOffice (cached in __dsm_cache__/)."""
+    from dsm.convert import ensure_xlsx_cached
+    return ensure_xlsx_cached(path, on_progress=lambda msg: click.echo(msg))
+
+
 def _import_cmd(xlsx_path: Path, db_path: Path | None, with_formulas: bool = False):
+    xlsx_path = _ensure_xlsx(xlsx_path)
+
     if db_path is None:
         db_path = _default_db(xlsx_path)
 
@@ -54,8 +62,9 @@ def _import_cmd(xlsx_path: Path, db_path: Path | None, with_formulas: bool = Fal
 @click.option("--with-formulas", is_flag=True, default=False,
               help="Also store formula strings (loads workbook twice, results in cached_value)")
 def import_cmd(xlsx_path: Path, db_path: Path | None, with_formulas: bool):
-    """Import all sheets from an xlsx file into SQLite DB.
+    """Import all sheets from an xlsx/xls file into SQLite DB.
 
+    .xls files are auto-converted to .xlsx via LibreOffice before import.
     By default, stores calculated values (data_only mode).
     Use --with-formulas to also store formula strings.
     """
@@ -86,6 +95,9 @@ def split(xlsx_path: Path | None, db_path: Path | None, output_dir: Path | None,
     """
     if xlsx_path is None and db_path is None:
         raise click.UsageError("Either XLSX_PATH or --db must be provided.")
+
+    if xlsx_path is not None:
+        xlsx_path = _ensure_xlsx(xlsx_path)
 
     if db_path is None:
         db_path = _default_db(xlsx_path)
