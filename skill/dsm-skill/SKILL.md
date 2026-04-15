@@ -67,11 +67,6 @@ dsm config reset --db <file.db>
 
 현재 스키마는 [schema.md](schema.md) 참조.
 
-스키마가 변경되면 codegen으로 재생성:
-```bash
-python scripts/codegen.py <excel.xlsx> --auto --apply --schema-doc skill/dsm-skill/schema.md
-```
-
 ## 워크플로우
 
 ### 1. Import + 조회
@@ -128,18 +123,6 @@ dsm log undo 1 --db regmap.db
 
 # Export (DB → xlsx, 원본 서식 유지)
 dsm merge --input-dir regmap_split/ --base regmap.db --output modified.xlsx
-```
-
-### 5. Code Generation (스키마 변경 시)
-
-Excel 컬럼 구조가 달라지면 codegen을 다시 실행:
-
-```bash
-# Auto 모드: level2_*와 memorymap 시트 자동 탐지 → domain_models.py 갱신 + schema.md 재생성
-python scripts/codegen.py <new_excel.xlsx> --auto --apply --schema-doc skill/dsm-skill/schema.md
-
-# 수동 모드: 특정 시트만
-python scripts/codegen.py <excel.xlsx> --sheet level2_common --apply
 ```
 
 ## 시트 구조
