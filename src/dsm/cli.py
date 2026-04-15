@@ -588,6 +588,37 @@ def _do_patch_merge(input_dir: Path, output: Path | None, base: Path):
                 click.echo(f"    ... and {len(group) - 5} more")
 
 
+# -- export -----------------------------------------------------------------
+
+@main.command()
+@click.option("--db", "db_path", type=click.Path(exists=True, path_type=Path), required=True,
+              help="Source DB or xlsx path")
+@click.option("--output", "-o", type=click.Path(path_type=Path), required=True,
+              help="Output xlsx path")
+def export(db_path: Path, output: Path):
+    """Export DB domain models back to xlsx.
+
+    Loads the original Excel BLOB from the DB and overwrites only
+    domain model cells (Register, MemoryMap, Overview). All formatting,
+    merges, styles, and non-domain sheets are preserved.
+
+    \b
+    Examples:
+      dsm export --db regmap.db -o modified.xlsx
+      dsm export --db regmap.xlsx -o modified.xlsx
+    """
+    from dsm.exporter import export_xlsx
+
+    Session = _open_db(db_path)
+
+    t0 = time.perf_counter()
+    with Session() as session:
+        export_xlsx(session, output, on_progress=click.echo)
+    elapsed = time.perf_counter() - t0
+
+    click.echo(f"Export complete ({elapsed:.1f}s)")
+
+
 # -- config -----------------------------------------------------------------
 
 @main.group()

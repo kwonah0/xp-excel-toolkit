@@ -46,6 +46,10 @@ dsm query registers --db <file.xlsx>
 dsm query registers --db <file.db> --ip SENSOR_A --json
 dsm query memmap --db <file.db>
 
+# Export: DB → xlsx (원본 서식 유지)
+dsm export --db <file.db> -o modified.xlsx
+dsm export --db <file.xlsx> -o modified.xlsx    # xlsx도 가능 (자동 import)
+
 # Merge: 분리 파일 재결합
 dsm merge --input-dir design_split/ --output merged.xlsx
 dsm merge --input-dir design_split/ --base original.db --output patched.xlsx
@@ -109,9 +113,12 @@ dsm diff old.db new.db --domain
 dsm diff old.db new.db --all
 ```
 
-### 4. SQL 수정 + 감사 추적
+### 4. SQL 수정 + Export (Split 없이 수정)
 
 ```bash
+# Import
+dsm import regmap.xlsx --db regmap.db
+
 # 값 수정 (자동으로 change_log에 기록됨)
 dsm sql "UPDATE register SET init='0xFF' WHERE name='SENSOR_A' AND para='0'" --db regmap.db
 
@@ -122,7 +129,7 @@ dsm log show --db regmap.db
 dsm log undo 1 --db regmap.db
 
 # Export (DB → xlsx, 원본 서식 유지)
-dsm merge --input-dir regmap_split/ --base regmap.db --output modified.xlsx
+dsm export --db regmap.db -o regmap_modified.xlsx
 ```
 
 ## 시트 구조

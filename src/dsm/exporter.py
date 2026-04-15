@@ -2,87 +2,188 @@
 
 from __future__ import annotations
 
+import fnmatch
 import io
+from collections.abc import Callable
 from pathlib import Path
 
 import openpyxl
 from openpyxl.cell.cell import Cell, MergedCell
 from openpyxl.comments import Comment
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
+from openpyxl.styles import Border, Font, PatternFill, Side
 from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
+from openpyxl.worksheet.worksheet import Worksheet
 from sqlalchemy.orm import Session
 
 from dsm.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
-from dsm.domain_models import REGMAP_FIELD_MAP, Register
+from dsm.domain_models import (
+    REGMAP_FIELD_MAP, MEMMAP_FIELD_MAP,
+    Register, MemoryMapEntry, OverviewEntry,
+)
 
 
-# Reverse map: field_name -> header_text
-_FIELD_TO_HEADER = {v: k for k, v in REGMAP_FIELD_MAP.items()}
+# ── Cell writing helpers ─────────────────────────────────────────────
+
+def _write_cell(ws: Worksheet, row: int, col: int, val) -> None:
+    """Write a value to a cell, handling merged cells."""
+    cell = ws.cell(row=row, column=col)
+    if isinstance(cell, MergedCell):
+        for mr in ws.merged_cells.ranges:
+            if (mr.min_row <= row <= mr.max_row
+                    and mr.min_col <= col <= mr.max_col):
+                ws.cell(row=mr.min_row, column=mr.min_col).value = val
+                break
+    else:
+        cell.value = val
 
 
+def _build_column_map(
+    ws: Worksheet,
+    header_row: int,
+    field_map: dict[str, str],
+) -> dict[str, int]:
+    """Build field_name → column_index mapping from header row."""
+    col_map: dict[str, int] = {}
+    for cell in ws[header_row]:
+        if cell.value and isinstance(cell.value, str):
+            header = cell.value.strip()
+            if header in field_map:
+                col_map[field_map[header]] = cell.column
+    return col_map
+
+
+# ── Export: domain models → xlsx ─────────────────────────────────────
+
+def _export_flat_table(
+    session: Session,
+    ws: Worksheet,
+    sheet_obj: ExcelSheet,
+    domain_cls: type,
+    field_map: dict[str, str],
+) -> int:
+    """Export Register or MemoryMapEntry rows back to worksheet cells.
+
+    Returns number of rows written.
+    """
+    if not sheet_obj.header_row:
+        return 0
+
+    col_map = _build_column_map(ws, sheet_obj.header_row, field_map)
+    if not col_map:
+        return 0
+
+    rows = (
+        session.query(domain_cls)
+        .filter_by(sheet_id=sheet_obj.id)
+        .all()
+    )
+
+    for row_obj in rows:
+        for field_name, col_idx in col_map.items():
+            val = getattr(row_obj, field_name, None)
+            _write_cell(ws, row_obj.excel_row, col_idx, val)
+
+    return len(rows)
+
+
+def _export_overview(
+    session: Session,
+    ws: Worksheet,
+    sheet_obj: ExcelSheet,
+) -> int:
+    """Export OverviewEntry rows back to worksheet cells.
+
+    Returns number of rows written.
+    """
+    entries = (
+        session.query(OverviewEntry)
+        .filter_by(sheet_id=sheet_obj.id)
+        .order_by(OverviewEntry.excel_row)
+        .all()
+    )
+
+    for entry in entries:
+        row = entry.excel_row
+        if entry.is_category:
+            _write_cell(ws, row, 1, f"#{entry.category}")
+        elif entry.is_commented:
+            _write_cell(ws, row, 1, f"#{entry.key}")
+        else:
+            _write_cell(ws, row, 1, entry.key)
+
+        _write_cell(ws, row, 2, entry.value)
+        _write_cell(ws, row, 3, entry.comment)
+
+    return len(entries)
+
+
+def export_xlsx(
+    session: Session,
+    output_path: str | Path,
+    on_progress: Callable[[str], None] | None = None,
+) -> Path:
+    """Export DB domain models back to xlsx, preserving original formatting.
+
+    Loads the original BLOB and overwrites only domain model cells.
+    All formatting, merges, styles, and non-domain sheets are preserved.
+    """
+    output_path = Path(output_path)
+
+    wb_obj = session.query(ExcelWorkbook).first()
+    if not wb_obj or not wb_obj.blob:
+        raise ValueError("No workbook found in DB or BLOB is missing")
+
+    wb = openpyxl.load_workbook(io.BytesIO(wb_obj.blob))
+
+    # Sheet pattern → (domain_cls, field_map | None)
+    _SHEET_HANDLERS = [
+        ("level2_*", Register, REGMAP_FIELD_MAP),
+        ("memorymap", MemoryMapEntry, MEMMAP_FIELD_MAP),
+        ("Overview", OverviewEntry, None),
+    ]
+
+    total = 0
+    for sheet_obj in wb_obj.sheets:
+        if sheet_obj.name not in wb.sheetnames:
+            continue
+        ws = wb[sheet_obj.name]
+
+        for pattern, domain_cls, field_map in _SHEET_HANDLERS:
+            if not fnmatch.fnmatch(sheet_obj.name.lower(), pattern.lower()):
+                continue
+
+            if domain_cls is OverviewEntry:
+                count = _export_overview(session, ws, sheet_obj)
+            else:
+                count = _export_flat_table(
+                    session, ws, sheet_obj, domain_cls, field_map,
+                )
+
+            if count and on_progress:
+                on_progress(f"  {sheet_obj.name}: {count} rows")
+            total += count
+            break  # matched, no need to try other patterns
+
+    wb.save(output_path)
+    wb.close()
+
+    if on_progress:
+        on_progress(f"Exported {total} domain rows to {output_path}")
+
+    return output_path
+
+
+# ── Legacy / utility exports ─────────────────────────────────────────
+
+# Keep export_regmap_xlsx as alias for backward compatibility
 def export_regmap_xlsx(
     session: Session,
     workbook_id: int,
     output_path: str | Path,
     column_map: dict[str, int] | None = None,
 ) -> Path:
-    """
-    Write modified Register data back to .xlsx, restoring original formatting.
-
-    Strategy: Load original BLOB -> overwrite only changed cell values -> save.
-    This preserves 100% of the original formatting, merges, colors, etc.
-    """
-    output_path = Path(output_path)
-
-    wb_obj = session.get(ExcelWorkbook, workbook_id)
-    if not wb_obj or not wb_obj.blob:
-        raise ValueError(f"Workbook {workbook_id} not found or has no BLOB")
-
-    # Load original workbook from stored BLOB
-    wb = openpyxl.load_workbook(io.BytesIO(wb_obj.blob))
-
-    for sheet_obj in wb_obj.sheets:
-        ws = wb[sheet_obj.name]
-
-        if not sheet_obj.header_row:
-            continue
-
-        # Get all registers for this sheet
-        registers = (
-            session.query(Register)
-            .filter_by(sheet_id=sheet_obj.id)
-            .all()
-        )
-
-        if not column_map:
-            # Build column_map from header row
-            column_map = {}
-            for cell in ws[sheet_obj.header_row]:
-                if cell.value and isinstance(cell.value, str):
-                    header = cell.value.strip()
-                    if header in REGMAP_FIELD_MAP:
-                        column_map[REGMAP_FIELD_MAP[header]] = cell.column
-
-        for reg in registers:
-            for field_name, col_idx in column_map.items():
-                val = getattr(reg, field_name, None)
-                if val is None:
-                    continue
-                cell = ws.cell(row=reg.excel_row, column=col_idx)
-                if isinstance(cell, MergedCell):
-                    # Write to the merge origin instead
-                    for mr in ws.merged_cells.ranges:
-                        if (mr.min_row <= reg.excel_row <= mr.max_row
-                                and mr.min_col <= col_idx <= mr.max_col):
-                            ws.cell(row=mr.min_row, column=mr.min_col).value = val
-                            break
-                else:
-                    cell.value = val
-
-    wb.save(output_path)
-    wb.close()
-    return output_path
+    """Write modified Register data back to .xlsx (legacy API)."""
+    return export_xlsx(session, output_path)
 
 
 def _apply_style(cell: Cell, style: dict | None) -> None:
@@ -90,13 +191,11 @@ def _apply_style(cell: Cell, style: dict | None) -> None:
     if not style:
         return
 
-    # Background color
     bg = style.get("bg_color")
     if bg:
         color = bg.lstrip("#")
         cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
 
-    # Font
     font_kwargs = {}
     if style.get("font_bold"):
         font_kwargs["bold"] = True
@@ -106,12 +205,10 @@ def _apply_style(cell: Cell, style: dict | None) -> None:
     if font_kwargs:
         cell.font = Font(**font_kwargs)
 
-    # Number format
     nf = style.get("number_format")
     if nf:
         cell.number_format = nf
 
-    # Borders
     border_sides = {}
     for side_name in ("left", "right", "top", "bottom"):
         bs = style.get(f"border_{side_name}")
@@ -141,14 +238,12 @@ def export_from_cells(
     ws = wb.active
     ws.title = sheet_obj.name
 
-    # Write cells
     cells = (
         session.query(ExcelCell)
         .filter(ExcelCell.sheet_id == sheet_id)
         .all()
     )
     for cell_rec in cells:
-        # Restore formula objects if applicable
         if cell_rec.formula_type == "array" and cell_rec.formula_ref:
             value = ArrayFormula(ref=cell_rec.formula_ref, text=cell_rec.raw_value)
         elif cell_rec.formula_type == "dataTable" and cell_rec.formula_ref:
@@ -160,7 +255,6 @@ def export_from_cells(
         if cell_rec.comment:
             c.comment = Comment(cell_rec.comment, "")
 
-    # Apply merges
     merges = (
         session.query(ExcelMerge)
         .filter(ExcelMerge.sheet_id == sheet_id)
@@ -172,7 +266,6 @@ def export_from_cells(
             end_row=m.max_row, end_column=m.max_col,
         )
 
-    # Freeze header if set
     if sheet_obj.header_row:
         ws.freeze_panes = f"A{sheet_obj.header_row + 1}"
 
