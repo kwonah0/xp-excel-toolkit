@@ -71,7 +71,7 @@ def _get_cache_dir() -> Path:
 def convert_xls_to_xlsx(
     xls_path: str | Path,
     output_dir: str | Path | None = None,
-    timeout: int = 120,
+    timeout: int = 600,
 ) -> Path:
     """Convert .xls file to .xlsx using LibreOffice.
 
@@ -95,7 +95,6 @@ def convert_xls_to_xlsx(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Convert directly into output_dir
     cmd = [
         lo,
         "--headless",
@@ -116,24 +115,24 @@ def convert_xls_to_xlsx(
             f"LibreOffice conversion timed out after {timeout}s"
         ) from e
 
-    if result.returncode != 0:
+    # Find the converted file — check before raising on returncode,
+    # because LibreOffice sometimes exits non-zero but still produces output.
+    converted = output_dir / f"{xls_path.stem}.xlsx"
+    if not converted.exists():
+        xlsx_files = list(output_dir.glob(f"{xls_path.stem}*.xlsx"))
+        converted = xlsx_files[0] if xlsx_files else None
+
+    if converted is None:
         raise RuntimeError(
             f"LibreOffice conversion failed (exit {result.returncode}):\n"
             f"  stdout: {result.stdout}\n"
             f"  stderr: {result.stderr}"
         )
 
-    # Find the converted file
-    converted = output_dir / f"{xls_path.stem}.xlsx"
-    if not converted.exists():
-        xlsx_files = list(output_dir.glob(f"{xls_path.stem}*.xlsx"))
-        if not xlsx_files:
-            raise RuntimeError(
-                f"Conversion produced no .xlsx file.\n"
-                f"  stdout: {result.stdout}\n"
-                f"  stderr: {result.stderr}"
-            )
-        converted = xlsx_files[0]
+    if result.returncode != 0 and result.stderr:
+        import sys
+        print(f"Warning: LibreOffice exited with code {result.returncode}, "
+              f"but output file was created.", file=sys.stderr)
 
     return converted
 
