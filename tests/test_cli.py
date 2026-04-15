@@ -67,8 +67,11 @@ class TestImport:
         result = runner.invoke(main, ["import", str(xlsx)])
 
         assert result.exit_code == 0, result.output
-        # Default DB: same dir, same stem
-        assert (work_dir / "regmap_sample.db").exists()
+        # Default DB: __dsm__/ in cwd
+        cache_dir = Path.cwd() / "__dsm__"
+        assert cache_dir.exists()
+        db_files = list(cache_dir.glob("regmap_sample_*.db"))
+        assert len(db_files) >= 1, f"No cached DB found in {cache_dir}"
 
 
 # ── dsm split ─────────────────────────────────────────────────────────

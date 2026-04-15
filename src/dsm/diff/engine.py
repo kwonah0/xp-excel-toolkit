@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
@@ -812,64 +811,11 @@ def _resolve_db_worker(path: Path, with_formulas: bool = False) -> tuple[Path, b
     return _resolve_db(path, with_formulas=with_formulas)
 
 
-def _cache_key(path: Path) -> tuple[str, str]:
-    """Generate cache key (hash, mtime_str) from file path and mtime."""
-    abs_path = path.resolve()
-    mtime = abs_path.stat().st_mtime
-    raw = f"{abs_path}_{mtime}"
-    h = hashlib.sha256(raw.encode()).hexdigest()[:12]
-    mtime_str = datetime.fromtimestamp(mtime).strftime("%Y%m%d_%H%M%S")
-    return h, mtime_str
-
-
-def _ensure_xlsx(path: Path, on_progress: Callable[[str], None] | None = None) -> Path:
-    """If path is .xls, convert to .xlsx via LibreOffice (cached in __dsm__/)."""
-    from dsm.convert import ensure_xlsx_cached
-    return ensure_xlsx_cached(path, on_progress=on_progress)
-
-
 def _resolve_db(
     path: Path,
     on_progress: Callable[[str], None] | None = None,
     with_formulas: bool = False,
 ) -> tuple[Path, bool]:
-    """If path is .xlsx/.xls, import to cached DB and return (DB path, is_cached).
-    If .db, return (path, False).
-    .xls files are auto-converted to .xlsx via LibreOffice before import.
-    Cached DBs are stored in __dsm__/ in the current working directory.
-    """
-    if path.suffix == ".db":
-        return path, False
-
-    if path.suffix.lower() in (".xlsx", ".xls"):
-        # Convert .xls → .xlsx if needed
-        xlsx_path = _ensure_xlsx(path, on_progress)
-
-        # Cache key uses the original path (for .xls) so re-runs detect same file
-        cache_dir = Path.cwd() / "__dsm__"
-        cache_dir.mkdir(exist_ok=True)
-
-        h, mtime_str = _cache_key(path)
-        cached_db = cache_dir / f"{path.stem}_{h}_{mtime_str}.db"
-
-        if cached_db.exists():
-            msg = f"Using cached DB for {path.name} ({cached_db.name})"
-            if on_progress:
-                on_progress(msg)
-            else:
-                print(msg)  # parallel worker has no callback
-            return cached_db, True
-
-        msg = f"Importing {xlsx_path.name} into cache..."
-        if on_progress:
-            on_progress(msg)
-        else:
-            print(msg)
-        from dsm.xlsx_parser import import_xlsx
-        Session = init_db(f"sqlite:///{cached_db}")
-        with Session() as session:
-            import_xlsx(session, xlsx_path, on_progress=on_progress, with_formulas=with_formulas)
-            session.commit()
-        return cached_db, True
-
-    raise ValueError(f"Unsupported file type: {path.suffix} (expected .db, .xlsx, or .xls)")
+    """Delegate to convert.resolve_db."""
+    from dsm.convert import resolve_db
+    return resolve_db(path, on_progress=on_progress, with_formulas=with_formulas)

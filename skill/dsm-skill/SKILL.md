@@ -16,8 +16,9 @@ cd $DSM_ROOT
 source .venv/bin/activate
 
 # Import: Excel → DB
-dsm import <excel.xlsx> --db <output.db>
-dsm import <excel.xls>                    # .xls → auto-convert via LibreOffice
+dsm import <excel.xlsx>                    # → __dsm__/<stem>_<hash>.db (자동)
+dsm import <excel.xlsx> --db <output.db>   # → 지정 경로에 DB 생성
+dsm import <excel.xls>                     # .xls → auto-convert via LibreOffice
 
 # Split: IP별 분리
 dsm split <excel.xlsx>                     # → <stem>_split/ 디렉토리
@@ -29,15 +30,15 @@ dsm diff old.db new.db --format text       # 텍스트 전체 출력
 dsm diff old.db new.db --format json       # JSON 출력
 dsm diff old.db new.db --all               # cell + domain + comment + style + merge 전부
 
-# SQL 조회/수정
-dsm sql "SELECT * FROM register" --db <file.db>
+# SQL 조회/수정 (--db에 xlsx도 가능 → 자동 import)
+dsm sql "SELECT * FROM register" --db <file.xlsx>
 dsm sql "SELECT * FROM register" --db <file.db> --json
 dsm sql "UPDATE register SET type='RW1' WHERE id=1" --db <file.db>
 
-# Query 명령 (구조화된 조회)
-dsm query sheets --db <file.db>
+# Query 명령 (--db에 xlsx도 가능)
+dsm query sheets --db <file.xlsx>
 dsm query ips --db <file.db>
-dsm query registers --db <file.db>
+dsm query registers --db <file.xlsx>
 dsm query registers --db <file.db> --ip SENSOR_A --json
 dsm query memmap --db <file.db>
 
@@ -72,18 +73,15 @@ python scripts/codegen.py <excel.xlsx> --auto --apply --schema-doc skill/dsm-ski
 ### 1. Import + 조회
 
 ```bash
-# Excel → DB
-dsm import regmap.xlsx --db regmap.db
-
-# 기본 조회
-dsm query sheets --db regmap.db
-dsm query ips --db regmap.db
-dsm query registers --db regmap.db --ip SENSOR_A
+# Excel → DB (xlsx를 직접 --db에 넘기면 자동 import)
+dsm query sheets --db regmap.xlsx
+dsm query ips --db regmap.xlsx
+dsm query registers --db regmap.xlsx --ip SENSOR_A
 
 # SQL 조회 (유연한 쿼리)
-dsm sql "SELECT name, type, indx, init FROM register WHERE type='RW2'" --db regmap.db
-dsm sql "SELECT * FROM overview_entry WHERE category='General Option'" --db regmap.db
-dsm sql "SELECT baseaddr, group, comment FROM memorymap_entry" --db regmap.db
+dsm sql "SELECT name, type, indx, init FROM register WHERE type='RW2'" --db regmap.xlsx
+dsm sql "SELECT * FROM overview_entry WHERE category='General Option'" --db regmap.xlsx
+dsm sql "SELECT baseaddr, group, comment FROM memorymap_entry" --db regmap.xlsx
 ```
 
 ### 2. Split → 수정 → Merge
@@ -151,6 +149,7 @@ python scripts/codegen.py <excel.xlsx> --sheet level2_common --apply
 ## 주의사항
 
 - DB는 SQLite 파일. `dsm sql`로 임의의 SQL 실행 가능.
+- `--db`에 `.xlsx`/`.xls`를 직접 넘기면 `__dsm__/`에 자동 import 후 쿼리.
 - `.xls` 파일은 LibreOffice를 통해 자동 `.xlsx` 변환 (`__dsm__/`에 캐시).
 - `.xls`를 `.xlsx`로 확장자만 바꾸면 에러 발생 — 반드시 원래 확장자 유지.
 - Diff 기본 출력은 CSV 파일 자동 생성 + stdout 요약.

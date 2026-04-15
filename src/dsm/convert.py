@@ -198,6 +198,68 @@ def validate_xlsx_format(path: Path) -> None:
         )
 
 
+def cache_key(path: Path) -> tuple[str, str]:
+    """Generate cache key (hash, mtime_str) from file path and mtime."""
+    abs_path = path.resolve()
+    mtime = abs_path.stat().st_mtime
+    raw = f"{abs_path}_{mtime}"
+    h = hashlib.sha256(raw.encode()).hexdigest()[:12]
+    mtime_str = datetime.fromtimestamp(mtime).strftime("%Y%m%d_%H%M%S")
+    return h, mtime_str
+
+
+def resolve_db(
+    path: Path,
+    on_progress=None,
+    with_formulas: bool = False,
+) -> tuple[Path, bool]:
+    """Resolve any file path to a DB path, auto-importing if needed.
+
+    - .db → return as-is
+    - .xlsx/.xls → ensure xlsx, import to __dsm__/<stem>_<hash>.db
+
+    Returns:
+        (db_path, is_cached) — is_cached=True if DB is in __dsm__/
+    """
+    if path.suffix == ".db":
+        return path, False
+
+    if path.suffix.lower() in (".xlsx", ".xls"):
+        xlsx_path = ensure_xlsx_cached(path, on_progress=on_progress)
+
+        cache_dir = Path.cwd() / _CACHE_DIR_NAME
+        cache_dir.mkdir(exist_ok=True)
+
+        h, mtime_str = cache_key(path)
+        cached_db = cache_dir / f"{path.stem}_{h}_{mtime_str}.db"
+
+        if cached_db.exists():
+            msg = f"Using cached DB for {path.name} ({cached_db.name})"
+            if on_progress:
+                on_progress(msg)
+            else:
+                print(msg)
+            return cached_db, True
+
+        msg = f"Importing {xlsx_path.name} into cache..."
+        if on_progress:
+            on_progress(msg)
+        else:
+            print(msg)
+
+        from dsm.models import init_db
+        from dsm.xlsx_parser import import_xlsx
+
+        Session = init_db(f"sqlite:///{cached_db}")
+        with Session() as session:
+            import_xlsx(session, xlsx_path, on_progress=on_progress,
+                        with_formulas=with_formulas)
+            session.commit()
+        return cached_db, True
+
+    raise ValueError(f"Unsupported file type: {path.suffix} (expected .db, .xlsx, or .xls)")
+
+
 def ensure_xlsx_cached(
     path: Path,
     on_progress=None,

@@ -11,9 +11,16 @@ import click
 from dsm.models import init_db
 
 
-def _default_db(xlsx_path: Path) -> Path:
-    """Derive default DB path from xlsx: same dir, same stem + .db"""
-    return xlsx_path.with_suffix(".db")
+def _resolve_db(path: Path, with_formulas: bool = False) -> tuple[Path, bool]:
+    """Resolve .xlsx/.xls/.db path to a DB path, auto-importing to __dsm__/ if needed."""
+    from dsm.convert import resolve_db
+    return resolve_db(path, on_progress=click.echo, with_formulas=with_formulas)
+
+
+def _open_db(path: Path):
+    """Resolve path (xlsx/xls/db) and return Session factory."""
+    db_path, _ = _resolve_db(path)
+    return init_db(f"sqlite:///{db_path}")
 
 
 @click.group()
@@ -31,11 +38,14 @@ def _ensure_xlsx(path: Path) -> Path:
 
 
 def _import_cmd(xlsx_path: Path, db_path: Path | None, with_formulas: bool = False):
-    xlsx_path = _ensure_xlsx(xlsx_path)
-
     if db_path is None:
-        db_path = _default_db(xlsx_path)
+        # Default: auto-import to __dsm__/
+        db_path, _ = _resolve_db(xlsx_path, with_formulas=with_formulas)
+        click.echo(f"DB: {db_path}")
+        return
 
+    # Explicit --db: import to specified path
+    xlsx_path = _ensure_xlsx(xlsx_path)
     db_url = f"sqlite:///{db_path}"
     Session = init_db(db_url)
 
@@ -58,7 +68,7 @@ def _import_cmd(xlsx_path: Path, db_path: Path | None, with_formulas: bool = Fal
 @click.command("import")
 @click.argument("xlsx_path", type=click.Path(exists=True, path_type=Path))
 @click.option("--db", "db_path", type=click.Path(path_type=Path), default=None,
-              help="SQLite DB path (default: <xlsx_stem>.db)")
+              help="SQLite DB path (default: __dsm__/<stem>_<hash>.db)")
 @click.option("--with-formulas", is_flag=True, default=False,
               help="Also store formula strings (loads workbook twice, results in cached_value)")
 def import_cmd(xlsx_path: Path, db_path: Path | None, with_formulas: bool):
@@ -79,7 +89,7 @@ main.add_command(import_cmd)
 @main.command()
 @click.argument("xlsx_path", type=click.Path(exists=True, path_type=Path), required=False, default=None)
 @click.option("--db", "db_path", type=click.Path(path_type=Path), default=None,
-              help="SQLite DB path (default: <xlsx_stem>.db)")
+              help="SQLite DB path (default: __dsm__/<stem>_<hash>.db)")
 @click.option("--output-dir", type=click.Path(path_type=Path), default=None,
               help="Output directory (default: <xlsx_stem>_split/)")
 @click.option("--parallel/--no-parallel", default=False,
@@ -96,11 +106,9 @@ def split(xlsx_path: Path | None, db_path: Path | None, output_dir: Path | None,
     if xlsx_path is None and db_path is None:
         raise click.UsageError("Either XLSX_PATH or --db must be provided.")
 
-    if xlsx_path is not None:
-        xlsx_path = _ensure_xlsx(xlsx_path)
-
-    if db_path is None:
-        db_path = _default_db(xlsx_path)
+    if xlsx_path is not None and db_path is None:
+        # Auto-resolve xlsx → cached DB in __dsm__/
+        db_path, _ = _resolve_db(xlsx_path)
 
     if output_dir is None:
         if xlsx_path is not None:
@@ -108,27 +116,23 @@ def split(xlsx_path: Path | None, db_path: Path | None, output_dir: Path | None,
         else:
             output_dir = db_path.parent / f"{db_path.stem}_split"
 
-    db_url = f"sqlite:///{db_path}"
-    Session = init_db(db_url)
+    Session = _open_db(db_path)
 
     t0 = time.perf_counter()
 
     with Session() as session:
         from dsm.models import ExcelWorkbook
 
-        if xlsx_path is not None:
-            existing = session.query(ExcelWorkbook).filter_by(
-                filename=xlsx_path.name
-            ).first()
-
-            if existing and not force_reimport:
-                click.echo(f"Reusing existing DB import for {xlsx_path.name}")
-            else:
-                click.echo(f"Importing {xlsx_path.name}...")
-                from dsm.xlsx_parser import import_xlsx
-                import_xlsx(session, xlsx_path, on_progress=click.echo)
-                session.commit()
-            workbook_name = xlsx_path.name
+        if xlsx_path is not None and force_reimport:
+            xlsx_resolved = _ensure_xlsx(xlsx_path)
+            click.echo(f"Re-importing {xlsx_resolved.name}...")
+            from dsm.xlsx_parser import import_xlsx
+            import_xlsx(session, xlsx_resolved, on_progress=click.echo)
+            session.commit()
+            workbook_name = xlsx_resolved.name
+        elif xlsx_path is not None:
+            # Already imported by _resolve_db above
+            workbook_name = _ensure_xlsx(xlsx_path).name
         else:
             # DB-only mode: find the first (or only) workbook in the DB
             wb_obj = session.query(ExcelWorkbook).first()
@@ -167,8 +171,7 @@ def query():
 @click.option("--db", "db_path", type=click.Path(exists=True, path_type=Path), required=True)
 def sheets(db_path: Path):
     """List all sheets in the DB."""
-    db_url = f"sqlite:///{db_path}"
-    Session = init_db(db_url)
+    Session = _open_db(db_path)
 
     with Session() as session:
         from dsm.models import ExcelSheet, ExcelWorkbook
@@ -182,8 +185,7 @@ def sheets(db_path: Path):
 @click.option("--sheet", "sheet_name", default=None, help="Filter by sheet name pattern (e.g. level2_%)")
 def ips(db_path: Path, sheet_name: str | None):
     """List distinct IP names with register counts."""
-    db_url = f"sqlite:///{db_path}"
-    Session = init_db(db_url)
+    Session = _open_db(db_path)
 
     with Session() as session:
         from sqlalchemy import func
@@ -213,8 +215,7 @@ def ips(db_path: Path, sheet_name: str | None):
 @click.option("--json", "as_json", is_flag=True, default=False, help="Output as JSON")
 def registers(db_path: Path, sheet_name: str | None, ip_name: str | None, as_json: bool):
     """Query Register rows with optional filters."""
-    db_url = f"sqlite:///{db_path}"
-    Session = init_db(db_url)
+    Session = _open_db(db_path)
 
     with Session() as session:
         from dsm.domain_models import Register
@@ -263,8 +264,7 @@ def registers(db_path: Path, sheet_name: str | None, ip_name: str | None, as_jso
 @click.option("--db", "db_path", type=click.Path(exists=True, path_type=Path), required=True)
 def memmap(db_path: Path):
     """Query MemoryMapEntry rows."""
-    db_url = f"sqlite:///{db_path}"
-    Session = init_db(db_url)
+    Session = _open_db(db_path)
 
     with Session() as session:
         from dsm.domain_models import MemoryMapEntry
@@ -603,7 +603,7 @@ def config_list(db_path: Path):
     from dsm.models import SheetConfigEntry
     from dsm.domain_models import seed_default_configs
 
-    Session = init_db(f"sqlite:///{db_path}")
+    Session = _open_db(db_path)
     with Session() as session:
         seed_default_configs(session)
         session.commit()
@@ -657,7 +657,7 @@ def config_add(db_path: Path, pattern: str, domain_type: str | None,
         # Validate JSON
         json.loads(field_map_json)
 
-    Session = init_db(f"sqlite:///{db_path}")
+    Session = _open_db(db_path)
     with Session() as session:
         entry = SheetConfigEntry(
             pattern=pattern,
@@ -677,7 +677,7 @@ def config_remove(db_path: Path, config_id: int):
     """Remove a sheet configuration by ID."""
     from dsm.models import SheetConfigEntry
 
-    Session = init_db(f"sqlite:///{db_path}")
+    Session = _open_db(db_path)
     with Session() as session:
         entry = session.get(SheetConfigEntry, config_id)
         if not entry:
@@ -694,7 +694,7 @@ def config_reset(db_path: Path):
     from dsm.models import SheetConfigEntry
     from dsm.domain_models import seed_default_configs
 
-    Session = init_db(f"sqlite:///{db_path}")
+    Session = _open_db(db_path)
     with Session() as session:
         session.query(SheetConfigEntry).delete()
         session.flush()
@@ -716,13 +716,13 @@ def sql_cmd(query_str: str, db_path: Path, as_json: bool):
     \b
     Examples:
       dsm sql "SELECT * FROM register" --db regmap.db
-      dsm sql "SELECT * FROM register" --db regmap.db --json
+      dsm sql "SELECT * FROM register" --db regmap.xlsx
       dsm sql "UPDATE register SET type='RW1' WHERE id=1" --db regmap.db
     """
     import json
     from sqlalchemy import text
 
-    Session = init_db(f"sqlite:///{db_path}")
+    Session = _open_db(db_path)
     with Session() as session:
         result = session.execute(text(query_str))
 
@@ -777,7 +777,7 @@ def log_show(db_path: Path, table_name: str | None, limit: int):
     """
     from dsm.models import ChangeLog
 
-    Session = init_db(f"sqlite:///{db_path}")
+    Session = _open_db(db_path)
     with Session() as session:
         q = session.query(ChangeLog).order_by(ChangeLog.id.desc())
         if table_name:
@@ -814,7 +814,7 @@ def log_undo(log_id: int, db_path: Path):
     from sqlalchemy import text as sa_text
     from dsm.models import ChangeLog
 
-    Session = init_db(f"sqlite:///{db_path}")
+    Session = _open_db(db_path)
     with Session() as session:
         entry = session.get(ChangeLog, log_id)
         if not entry:
@@ -842,7 +842,7 @@ def log_clear(db_path: Path):
     """Clear all change history."""
     from dsm.models import ChangeLog
 
-    Session = init_db(f"sqlite:///{db_path}")
+    Session = _open_db(db_path)
     with Session() as session:
         count = session.query(ChangeLog).count()
         session.query(ChangeLog).delete()
