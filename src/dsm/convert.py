@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import shutil
 import subprocess
-import tempfile
 from datetime import datetime
 from pathlib import Path
 
-# LibreOffice executable path — can be overridden via:
-#   1. Environment variable: DSM_LIBREOFFICE_PATH
-#   2. Directly setting dsm.convert.LIBREOFFICE_PATH
-LIBREOFFICE_PATH: str | None = os.environ.get("DSM_LIBREOFFICE_PATH")
+# ── Configuration ────────────────────────────────────────────────────
+# LibreOffice executable path. Set this if auto-detection fails.
+LIBREOFFICE_PATH: str | None = None
+
+_CACHE_DIR_NAME = "__dsm__"
 
 _SEARCH_PATHS = [
     "/usr/bin/libreoffice",
@@ -28,16 +27,16 @@ _SEARCH_PATHS = [
 ]
 
 
+# ── LibreOffice detection ────────────────────────────────────────────
+
 def _find_libreoffice() -> str:
     """Find LibreOffice executable.
 
     Priority:
-        1. LIBREOFFICE_PATH module variable
-        2. DSM_LIBREOFFICE_PATH environment variable
-        3. 'libreoffice' / 'soffice' on PATH
-        4. Common installation paths
+        1. LIBREOFFICE_PATH module variable (set above)
+        2. 'libreoffice' / 'soffice' on PATH
+        3. Common installation paths
     """
-    # 1. Module-level setting
     if LIBREOFFICE_PATH:
         p = Path(LIBREOFFICE_PATH)
         if p.exists():
@@ -46,37 +45,32 @@ def _find_libreoffice() -> str:
             f"LibreOffice not found at configured path: {LIBREOFFICE_PATH}"
         )
 
-    # 2. Environment variable (re-check in case set after module load)
-    env_path = os.environ.get("DSM_LIBREOFFICE_PATH")
-    if env_path:
-        p = Path(env_path)
-        if p.exists():
-            return str(p)
-        raise FileNotFoundError(
-            f"LibreOffice not found at DSM_LIBREOFFICE_PATH: {env_path}"
-        )
-
-    # 3. On PATH
     for name in ("libreoffice", "soffice"):
         found = shutil.which(name)
         if found:
             return found
 
-    # 4. Common paths
     for candidate in _SEARCH_PATHS:
         if Path(candidate).exists():
             return candidate
 
     raise FileNotFoundError(
-        "LibreOffice not found. Install it or set DSM_LIBREOFFICE_PATH.\n"
-        "  export DSM_LIBREOFFICE_PATH=/path/to/libreoffice"
+        "LibreOffice not found. Install it or set dsm.convert.LIBREOFFICE_PATH."
     )
+
+
+# ── XLS → XLSX conversion ───────────────────────────────────────────
+
+def _get_cache_dir() -> Path:
+    """Return __dsm__/ in cwd, creating it if needed."""
+    d = Path.cwd() / _CACHE_DIR_NAME
+    d.mkdir(exist_ok=True)
+    return d
 
 
 def convert_xls_to_xlsx(
     xls_path: str | Path,
     output_dir: str | Path | None = None,
-    libreoffice_path: str | None = None,
     timeout: int = 120,
 ) -> Path:
     """Convert .xls file to .xlsx using LibreOffice.
@@ -84,85 +78,71 @@ def convert_xls_to_xlsx(
     Args:
         xls_path: Path to the .xls file.
         output_dir: Directory for the output .xlsx file.
-                    If None, uses a temp directory next to the input file.
-        libreoffice_path: Override LibreOffice executable path for this call.
+                    If None, uses __dsm__/ in cwd.
         timeout: Timeout in seconds for the conversion process.
 
     Returns:
         Path to the converted .xlsx file.
-
-    Raises:
-        FileNotFoundError: If LibreOffice is not found.
-        RuntimeError: If conversion fails.
     """
     xls_path = Path(xls_path).resolve()
     if not xls_path.exists():
         raise FileNotFoundError(f"Input file not found: {xls_path}")
 
-    lo = libreoffice_path or _find_libreoffice()
+    lo = _find_libreoffice()
 
-    # Use a temp directory for conversion to avoid conflicts
-    with tempfile.TemporaryDirectory(prefix="dsm_convert_") as tmpdir:
-        cmd = [
-            lo,
-            "--headless",
-            "--convert-to", "xlsx",
-            "--outdir", tmpdir,
-            str(xls_path),
-        ]
+    if output_dir is None:
+        output_dir = _get_cache_dir()
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-            )
-        except subprocess.TimeoutExpired as e:
+    # Convert directly into output_dir
+    cmd = [
+        lo,
+        "--headless",
+        "--convert-to", "xlsx",
+        "--outdir", str(output_dir),
+        str(xls_path),
+    ]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(
+            f"LibreOffice conversion timed out after {timeout}s"
+        ) from e
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"LibreOffice conversion failed (exit {result.returncode}):\n"
+            f"  stdout: {result.stdout}\n"
+            f"  stderr: {result.stderr}"
+        )
+
+    # Find the converted file
+    converted = output_dir / f"{xls_path.stem}.xlsx"
+    if not converted.exists():
+        xlsx_files = list(output_dir.glob(f"{xls_path.stem}*.xlsx"))
+        if not xlsx_files:
             raise RuntimeError(
-                f"LibreOffice conversion timed out after {timeout}s"
-            ) from e
-
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"LibreOffice conversion failed (exit {result.returncode}):\n"
+                f"Conversion produced no .xlsx file.\n"
                 f"  stdout: {result.stdout}\n"
                 f"  stderr: {result.stderr}"
             )
+        converted = xlsx_files[0]
 
-        # Find the converted file
-        converted = Path(tmpdir) / f"{xls_path.stem}.xlsx"
-        if not converted.exists():
-            # Sometimes LibreOffice changes the name slightly
-            xlsx_files = list(Path(tmpdir).glob("*.xlsx"))
-            if not xlsx_files:
-                raise RuntimeError(
-                    f"Conversion produced no .xlsx file.\n"
-                    f"  stdout: {result.stdout}\n"
-                    f"  stderr: {result.stderr}"
-                )
-            converted = xlsx_files[0]
-
-        # Move to output location
-        if output_dir is None:
-            output_dir = xls_path.parent
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        dest = output_dir / converted.name
-        shutil.move(str(converted), str(dest))
-
-    return dest
+    return converted
 
 
-# ── Cached XLS → XLSX ─────────────────────────────────────────────
+# ── Cache helpers ────────────────────────────────────────────────────
 
-_CACHE_DIR_NAME = "__dsm__"
-
-
-def _xls_cache_key(xls_path: Path) -> tuple[str, str]:
-    """Generate cache key (hash, mtime_str) from .xls file path and mtime."""
-    abs_path = xls_path.resolve()
+def cache_key(path: Path) -> tuple[str, str]:
+    """Generate cache key (hash, mtime_str) from file path and mtime."""
+    abs_path = path.resolve()
     mtime = abs_path.stat().st_mtime
     raw = f"{abs_path}_{mtime}"
     h = hashlib.sha256(raw.encode()).hexdigest()[:12]
@@ -174,9 +154,6 @@ def validate_xlsx_format(path: Path) -> None:
     """Check that a .xlsx file is actually a valid ZIP (OOXML) file.
 
     Detects the common mistake of renaming a binary .xls file to .xlsx.
-
-    Raises:
-        ValueError: If the file is a binary .xls disguised as .xlsx.
     """
     _OLE2_MAGIC = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"
     _ZIP_MAGIC = b"PK"
@@ -198,15 +175,7 @@ def validate_xlsx_format(path: Path) -> None:
         )
 
 
-def cache_key(path: Path) -> tuple[str, str]:
-    """Generate cache key (hash, mtime_str) from file path and mtime."""
-    abs_path = path.resolve()
-    mtime = abs_path.stat().st_mtime
-    raw = f"{abs_path}_{mtime}"
-    h = hashlib.sha256(raw.encode()).hexdigest()[:12]
-    mtime_str = datetime.fromtimestamp(mtime).strftime("%Y%m%d_%H%M%S")
-    return h, mtime_str
-
+# ── Public API ───────────────────────────────────────────────────────
 
 def resolve_db(
     path: Path,
@@ -227,8 +196,7 @@ def resolve_db(
     if path.suffix.lower() in (".xlsx", ".xls"):
         xlsx_path = ensure_xlsx_cached(path, on_progress=on_progress)
 
-        cache_dir = Path.cwd() / _CACHE_DIR_NAME
-        cache_dir.mkdir(exist_ok=True)
+        cache_dir = _get_cache_dir()
 
         h, mtime_str = cache_key(path)
         cached_db = cache_dir / f"{path.stem}_{h}_{mtime_str}.db"
@@ -269,22 +237,14 @@ def ensure_xlsx_cached(
     If path is already .xlsx, validates it is a real OOXML file (not a
     renamed binary .xls).
     Cached .xlsx files are reused when the source .xls has not been modified.
-
-    Args:
-        path: Path to .xls or .xlsx file.
-        on_progress: Optional callback for progress messages.
-
-    Returns:
-        Path to the .xlsx file (original or cached conversion).
     """
     if path.suffix.lower() != ".xls":
         validate_xlsx_format(path)
         return path
 
-    cache_dir = Path.cwd() / _CACHE_DIR_NAME
-    cache_dir.mkdir(exist_ok=True)
+    cache_dir = _get_cache_dir()
 
-    h, mtime_str = _xls_cache_key(path)
+    h, mtime_str = cache_key(path)
     cached_xlsx = cache_dir / f"{path.stem}_{h}_{mtime_str}.xlsx"
 
     if cached_xlsx.exists():
