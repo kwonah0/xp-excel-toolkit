@@ -415,6 +415,12 @@ def main(xlsx_path: str, auto: bool, sheet: str | None, prefix: str, tablename: 
     path = Path(xlsx_path)
     wb = openpyxl.load_workbook(path, data_only=False)
 
+    # When --apply is used, default schema-doc path if not explicitly given
+    if apply and schema_doc_path is None:
+        default_schema = Path(__file__).resolve().parent.parent / "skill" / "dsm-skill" / "schema.md"
+        if default_schema.parent.exists():
+            schema_doc_path = str(default_schema)
+
     # ── Auto mode
     if auto:
         _run_auto(wb, apply, schema_doc_path)
