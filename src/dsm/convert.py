@@ -157,7 +157,7 @@ def convert_xls_to_xlsx(
 
 # ── Cached XLS → XLSX ─────────────────────────────────────────────
 
-_CACHE_DIR_NAME = "__dsm_cache__"
+_CACHE_DIR_NAME = "__dsm__"
 
 
 def _xls_cache_key(xls_path: Path) -> tuple[str, str]:
@@ -202,7 +202,7 @@ def ensure_xlsx_cached(
     path: Path,
     on_progress=None,
 ) -> Path:
-    """If path is .xls, convert to .xlsx and cache in __dsm_cache__/.
+    """If path is .xls, convert to .xlsx and cache in __dsm__/.
 
     If path is already .xlsx, validates it is a real OOXML file (not a
     renamed binary .xls).

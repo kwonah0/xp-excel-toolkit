@@ -823,7 +823,7 @@ def _cache_key(path: Path) -> tuple[str, str]:
 
 
 def _ensure_xlsx(path: Path, on_progress: Callable[[str], None] | None = None) -> Path:
-    """If path is .xls, convert to .xlsx via LibreOffice (cached in __dsm_cache__/)."""
+    """If path is .xls, convert to .xlsx via LibreOffice (cached in __dsm__/)."""
     from dsm.convert import ensure_xlsx_cached
     return ensure_xlsx_cached(path, on_progress=on_progress)
 
@@ -836,7 +836,7 @@ def _resolve_db(
     """If path is .xlsx/.xls, import to cached DB and return (DB path, is_cached).
     If .db, return (path, False).
     .xls files are auto-converted to .xlsx via LibreOffice before import.
-    Cached DBs are stored in __dsm_cache__/ in the current working directory.
+    Cached DBs are stored in __dsm__/ in the current working directory.
     """
     if path.suffix == ".db":
         return path, False
@@ -846,7 +846,7 @@ def _resolve_db(
         xlsx_path = _ensure_xlsx(path, on_progress)
 
         # Cache key uses the original path (for .xls) so re-runs detect same file
-        cache_dir = Path.cwd() / "__dsm_cache__"
+        cache_dir = Path.cwd() / "__dsm__"
         cache_dir.mkdir(exist_ok=True)
 
         h, mtime_str = _cache_key(path)

@@ -25,7 +25,7 @@ def main():
 # -- import -----------------------------------------------------------------
 
 def _ensure_xlsx(path: Path) -> Path:
-    """If path is .xls, convert to .xlsx using LibreOffice (cached in __dsm_cache__/)."""
+    """If path is .xls, convert to .xlsx using LibreOffice (cached in __dsm__/)."""
     from dsm.convert import ensure_xlsx_cached
     return ensure_xlsx_cached(path, on_progress=lambda msg: click.echo(msg))
 

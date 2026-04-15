@@ -5,5 +5,5 @@ __pycache__/
 dist/
 .venv/
 samples/
-__dsm_cache__/
+__dsm__/
 diff_*.csv

@@ -151,7 +151,7 @@ python scripts/codegen.py <excel.xlsx> --sheet level2_common --apply
 ## 주의사항
 
 - DB는 SQLite 파일. `dsm sql`로 임의의 SQL 실행 가능.
-- `.xls` 파일은 LibreOffice를 통해 자동 `.xlsx` 변환 (`__dsm_cache__/`에 캐시).
+- `.xls` 파일은 LibreOffice를 통해 자동 `.xlsx` 변환 (`__dsm__/`에 캐시).
 - `.xls`를 `.xlsx`로 확장자만 바꾸면 에러 발생 — 반드시 원래 확장자 유지.
 - Diff 기본 출력은 CSV 파일 자동 생성 + stdout 요약.
 - `--json` 플래그로 JSON 출력 가능 (파이프라인 연동 시 유용).
