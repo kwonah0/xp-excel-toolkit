@@ -1,3 +1,7 @@
+---
+description: "DSM (Design Specification Manager) — Register map Excel 관리 CLI. Import, Split, Diff, SQL 조회/수정, Merge/Export. 트리거: dsm, register map, regmap, excel import, 레지스터 맵"
+---
+
 # DSM — Design Specification Manager
 
 Register map Excel 파일(.xlsx/.xls)을 SQLite DB로 관리하는 CLI 도구. Import, Split, Diff, SQL 조회/수정, Merge/Export 워크플로우를 제공한다.
