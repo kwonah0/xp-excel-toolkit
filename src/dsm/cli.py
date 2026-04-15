@@ -702,3 +702,54 @@ def config_reset(db_path: Path):
         session.commit()
         count = session.query(SheetConfigEntry).count()
         click.echo(f"Reset to {count} default configurations.")
+
+
+# -- sql --------------------------------------------------------------------
+
+@main.command("sql")
+@click.argument("query_str")
+@click.option("--db", "db_path", type=click.Path(exists=True, path_type=Path), required=True)
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def sql_cmd(query_str: str, db_path: Path, as_json: bool):
+    """Execute raw SQL against the DB.
+
+    \b
+    Examples:
+      dsm sql "SELECT * FROM register" --db regmap.db
+      dsm sql "SELECT * FROM register" --db regmap.db --json
+      dsm sql "UPDATE register SET type='RW1' WHERE id=1" --db regmap.db
+    """
+    import json
+    from sqlalchemy import text
+
+    Session = init_db(f"sqlite:///{db_path}")
+    with Session() as session:
+        result = session.execute(text(query_str))
+
+        if result.returns_rows:
+            columns = list(result.keys())
+            rows = result.fetchall()
+
+            if as_json:
+                data = [dict(zip(columns, row)) for row in rows]
+                click.echo(json.dumps(data, indent=2, default=str))
+            else:
+                col_widths = [len(c) for c in columns]
+                for row in rows:
+                    for i, val in enumerate(row):
+                        col_widths[i] = max(col_widths[i], len(str(val) if val is not None else "NULL"))
+
+                header = "  ".join(c.ljust(col_widths[i]) for i, c in enumerate(columns))
+                click.echo(header)
+                click.echo("  ".join("-" * w for w in col_widths))
+                for row in rows:
+                    line = "  ".join(
+                        (str(v) if v is not None else "NULL").ljust(col_widths[i])
+                        for i, v in enumerate(row)
+                    )
+                    click.echo(line)
+
+                click.echo(f"\n({len(rows)} rows)")
+        else:
+            session.commit()
+            click.echo(f"OK ({result.rowcount} rows affected)")
