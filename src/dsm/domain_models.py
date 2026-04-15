@@ -158,7 +158,7 @@ DEFAULT_SHEET_CONFIGS = [
      "field_map": REGMAP_FIELD_MAP, "header_row": None},
     {"pattern": "memorymap", "domain_type": "memorymap_entry",
      "field_map": MEMMAP_FIELD_MAP, "header_row": None},
-    {"pattern": "overview", "domain_type": "overview_entry",
+    {"pattern": "Overview", "domain_type": "overview_entry",
      "field_map": None, "header_row": None,
      "parser_func": "dsm.parsers.overview:parse_overview_entries"},
 ]
@@ -189,7 +189,7 @@ def _default_sheet_configs():
     return {
         "level2_*": SheetConfig(field_map=REGMAP_FIELD_MAP, domain_cls=Register),
         "memorymap": SheetConfig(field_map=MEMMAP_FIELD_MAP, domain_cls=MemoryMapEntry),
-        "overview": SheetConfig(domain_cls=OverviewEntry,
+        "Overview": SheetConfig(domain_cls=OverviewEntry,
                                 parser_func=_get_overview_parser()),
     }
 

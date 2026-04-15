@@ -142,7 +142,7 @@ def _match_config(
     if sheet_name in configs:
         return configs[sheet_name]
     for pattern, config in configs.items():
-        if fnmatch.fnmatch(sheet_name, pattern):
+        if fnmatch.fnmatch(sheet_name.lower(), pattern.lower()):
             return config
     return None
 
