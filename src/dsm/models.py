@@ -97,9 +97,80 @@ class SheetConfigEntry(Base):
     parser_func_ref: Mapped[str | None] = mapped_column(Text)  # "module:func" for custom parsers
 
 
+# ── Audit log (change tracking) ────────────────────────────────────
+
+class ChangeLog(Base):
+    """Audit log for domain model changes (UPDATE / DELETE)."""
+    __tablename__ = "change_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    timestamp: Mapped[str] = mapped_column(Text)       # ISO 8601 (UTC)
+    table_name: Mapped[str] = mapped_column(Text)
+    row_id: Mapped[int]
+    column_name: Mapped[str] = mapped_column(Text)
+    old_value: Mapped[str | None] = mapped_column(Text)
+    new_value: Mapped[str | None] = mapped_column(Text)
+    operation: Mapped[str] = mapped_column(Text)        # "UPDATE" / "DELETE"
+
+
+# Registry: table_name -> list of column names to audit
+AUDIT_TARGETS: dict[str, list[str]] = {}
+
+
+def register_audit_target(table_name: str, columns: list[str]) -> None:
+    """Register a table and its columns for audit trigger creation."""
+    AUDIT_TARGETS[table_name] = columns
+
+
+def _create_audit_triggers(engine) -> None:
+    """Create SQLite triggers for all registered audit targets."""
+    from sqlalchemy import text
+
+    with engine.connect() as conn:
+        for table_name, columns in AUDIT_TARGETS.items():
+            # UPDATE triggers: one per column (quote identifiers for SQL reserved words)
+            for col in columns:
+                trigger_name = f"trg_{table_name}_update_{col}"
+                conn.execute(text(f"""
+                    CREATE TRIGGER IF NOT EXISTS [{trigger_name}]
+                    AFTER UPDATE OF [{col}] ON [{table_name}]
+                    WHEN OLD.[{col}] IS NOT NEW.[{col}]
+                    BEGIN
+                        INSERT INTO change_log
+                            (timestamp, table_name, row_id, column_name,
+                             old_value, new_value, operation)
+                        VALUES
+                            (datetime('now'), '{table_name}', NEW.id, '{col}',
+                             OLD.[{col}], NEW.[{col}], 'UPDATE');
+                    END;
+                """))
+
+            # DELETE trigger: one per table, logs all columns
+            trigger_name = f"trg_{table_name}_delete"
+            inserts = "\n".join(
+                f"""INSERT INTO change_log
+                    (timestamp, table_name, row_id, column_name,
+                     old_value, new_value, operation)
+                VALUES
+                    (datetime('now'), '{table_name}', OLD.id, '{col}',
+                     OLD.[{col}], NULL, 'DELETE');"""
+                for col in columns
+            )
+            conn.execute(text(f"""
+                CREATE TRIGGER IF NOT EXISTS [{trigger_name}]
+                AFTER DELETE ON [{table_name}]
+                BEGIN
+                    {inserts}
+                END;
+            """))
+
+        conn.commit()
+
+
 # ── DB setup helper ─────────────────────────────────────────────────
 
 def init_db(db_url: str = "sqlite:///excel_data.db"):
     engine = create_engine(db_url, echo=False)
     Base.metadata.create_all(engine)
+    _create_audit_triggers(engine)
     return sessionmaker(bind=engine)

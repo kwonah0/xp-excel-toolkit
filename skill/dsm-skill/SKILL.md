@@ -45,6 +45,13 @@ dsm query memmap --db <file.db>
 dsm merge --input-dir design_split/ --output merged.xlsx
 dsm merge --input-dir design_split/ --base original.db --output patched.xlsx
 
+# Change Log (감사 추적)
+dsm log show --db <file.db>                   # 최근 20개 변경 이력
+dsm log show --db <file.db> --table register  # 특정 테이블만
+dsm log show --db <file.db> --last 50         # 최근 50개
+dsm log undo 42 --db <file.db>                # 변경 되돌리기 (UPDATE만)
+dsm log clear --db <file.db>                  # 전체 이력 삭제 (확인 필요)
+
 # Config 관리
 dsm config list --db <file.db>
 dsm config add --db <file.db> --pattern "level2_*" --domain register
@@ -105,11 +112,17 @@ dsm diff old.db new.db --domain
 dsm diff old.db new.db --all
 ```
 
-### 4. SQL 수정 + Export
+### 4. SQL 수정 + 감사 추적
 
 ```bash
-# 값 수정
+# 값 수정 (자동으로 change_log에 기록됨)
 dsm sql "UPDATE register SET init='0xFF' WHERE name='SENSOR_A' AND para='0'" --db regmap.db
+
+# 변경 이력 확인
+dsm log show --db regmap.db
+
+# 실수 되돌리기
+dsm log undo 1 --db regmap.db
 
 # Export (DB → xlsx, 원본 서식 유지)
 dsm merge --input-dir regmap_split/ --base regmap.db --output modified.xlsx
@@ -144,3 +157,5 @@ python scripts/codegen.py <excel.xlsx> --sheet level2_common --apply
 - `--json` 플래그로 JSON 출력 가능 (파이프라인 연동 시 유용).
 - Config 패턴은 fnmatch 문법 (`*`, `?`, `[seq]`).
 - Patch merge는 원본 Excel BLOB 위에 변경분만 덮어쓰기 (서식/머지/스타일 보존).
+- `dsm sql`로 UPDATE/DELETE 시 `change_log` 테이블에 자동 기록 (SQLite 트리거).
+- Cache DB(`.xlsx` 기반 자동 생성)는 원본 변경 시 재생성되므로 audit도 초기화됨.

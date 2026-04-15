@@ -126,6 +126,15 @@ OVERVIEW_FIELDS = [
 ]
 
 
+# -- Audit target registration -------------------------------------------------
+
+from dsm.models import register_audit_target
+
+register_audit_target("register", REGMAP_FIELDS)
+register_audit_target("memorymap_entry", MEMMAP_FIELDS)
+register_audit_target("overview_entry", ["category", "key", "value", "comment"])
+
+
 # -- Domain class registry (tablename → class) --------------------------------
 
 DOMAIN_REGISTRY: dict[str, type] = {

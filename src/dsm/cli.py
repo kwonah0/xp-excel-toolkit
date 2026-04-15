@@ -753,3 +753,98 @@ def sql_cmd(query_str: str, db_path: Path, as_json: bool):
         else:
             session.commit()
             click.echo(f"OK ({result.rowcount} rows affected)")
+
+
+# -- log --------------------------------------------------------------------
+
+@main.group()
+def log():
+    """View and manage change history (audit trail)."""
+
+
+@log.command("show")
+@click.option("--db", "db_path", type=click.Path(exists=True, path_type=Path), required=True)
+@click.option("--table", "table_name", default=None, help="Filter by table name")
+@click.option("--last", "limit", type=int, default=20, help="Number of entries (default: 20)")
+def log_show(db_path: Path, table_name: str | None, limit: int):
+    """Show recent change history.
+
+    \b
+    Examples:
+      dsm log show --db regmap.db
+      dsm log show --db regmap.db --table register
+      dsm log show --db regmap.db --last 50
+    """
+    from dsm.models import ChangeLog
+
+    Session = init_db(f"sqlite:///{db_path}")
+    with Session() as session:
+        q = session.query(ChangeLog).order_by(ChangeLog.id.desc())
+        if table_name:
+            q = q.filter(ChangeLog.table_name == table_name)
+        entries = q.limit(limit).all()
+
+        if not entries:
+            click.echo("No changes recorded.")
+            return
+
+        click.echo(f"{'id':>4}  {'timestamp':<20} {'op':<6} {'table':<18} "
+                   f"{'row':>4} {'column':<16} {'old':<20} {'new':<20}")
+        click.echo("-" * 112)
+        for e in reversed(entries):
+            old = (e.old_value or "-")[:20].ljust(20)
+            new = (e.new_value or "-")[:20].ljust(20)
+            click.echo(
+                f"{e.id:>4}  {e.timestamp:<20} {e.operation:<6} {e.table_name:<18} "
+                f"{e.row_id:>4} {e.column_name:<16} {old} {new}"
+            )
+        click.echo(f"\n({len(entries)} entries)")
+
+
+@log.command("undo")
+@click.argument("log_id", type=int)
+@click.option("--db", "db_path", type=click.Path(exists=True, path_type=Path), required=True)
+def log_undo(log_id: int, db_path: Path):
+    """Revert a change by restoring the old value.
+
+    \b
+    Examples:
+      dsm log undo 42 --db regmap.db
+    """
+    from sqlalchemy import text as sa_text
+    from dsm.models import ChangeLog
+
+    Session = init_db(f"sqlite:///{db_path}")
+    with Session() as session:
+        entry = session.get(ChangeLog, log_id)
+        if not entry:
+            raise click.UsageError(f"Change log #{log_id} not found.")
+
+        if entry.operation == "DELETE":
+            click.echo("Cannot undo DELETE (row was removed). Use import to restore.")
+            return
+
+        click.echo(f"Reverting: {entry.table_name}.{entry.column_name} "
+                    f"(row {entry.row_id}): {entry.new_value!r} -> {entry.old_value!r}")
+
+        session.execute(
+            sa_text(f"UPDATE {entry.table_name} SET {entry.column_name} = :val WHERE id = :rid"),
+            {"val": entry.old_value, "rid": entry.row_id},
+        )
+        session.commit()
+        click.echo("Done.")
+
+
+@log.command("clear")
+@click.option("--db", "db_path", type=click.Path(exists=True, path_type=Path), required=True)
+@click.confirmation_option(prompt="Clear all change history?")
+def log_clear(db_path: Path):
+    """Clear all change history."""
+    from dsm.models import ChangeLog
+
+    Session = init_db(f"sqlite:///{db_path}")
+    with Session() as session:
+        count = session.query(ChangeLog).count()
+        session.query(ChangeLog).delete()
+        session.commit()
+        click.echo(f"Cleared {count} entries.")
