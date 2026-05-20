@@ -15,7 +15,14 @@ from excel_toolkit.convert import (
     resolve_db,
     validate_xlsx_format,
 )
-from excel_toolkit.exporter import export_from_cells
+from excel_toolkit.exporter import (
+    ExportHandler,
+    apply_style,
+    build_column_map,
+    export_domain_xlsx,
+    export_from_cells,
+    write_cell,
+)
 from excel_toolkit.merge import MergeResolver
 from excel_toolkit.models import (
     AUDIT_TARGETS,
@@ -36,7 +43,6 @@ from excel_toolkit.xlsx_parser import (
     find_header_row,
     import_sheet,
     import_xlsx,
-    register_domain,
 )
 
 __all__ = [
@@ -58,11 +64,15 @@ __all__ = [
     "import_sheet",
     "import_xls",
     "import_xlsx",
-    "register_domain",
     # Merge
     "MergeResolver",
     # Export
+    "apply_style",
+    "build_column_map",
+    "ExportHandler",
+    "export_domain_xlsx",
     "export_from_cells",
+    "write_cell",
     # Conversion / cache
     "convert_xls_to_xlsx",
     "ensure_xlsx_cached",
