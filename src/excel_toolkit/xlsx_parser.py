@@ -42,19 +42,24 @@ def _extract_cell_value(value: Any) -> tuple[str | None, str | None, str | None]
 class SheetConfig:
     """Per-sheet import configuration: which domain model and field mapping to use.
 
-    For flat-table sheets (level2_*, memorymap), use ``field_map`` + ``domain_cls``.
-    For custom layouts (overview), provide ``parser_func`` instead.
+    For flat-table sheets, supply ``field_map`` + ``domain_cls`` and the header
+    row will be auto-detected (or pass ``header_row`` explicitly). For non-flat
+    layouts (key-value sections, repeated blocks, ...), supply ``parser_func``
+    instead — it will be called as ``parser_func(session, ws, sheet_id)`` and
+    is expected to insert the domain rows itself.
 
-    Example usage::
+    Example::
+
+        PIN_FIELD_MAP = {"Pin": "pin_no", "Name": "name", "Dir": "direction"}
 
         sheet_configs = {
-            "level2_*": SheetConfig(
-                field_map=REGMAP_FIELD_MAP,
-                domain_cls=Register,
+            "Pinmap_*": SheetConfig(
+                field_map=PIN_FIELD_MAP,
+                domain_cls=PinEntry,
             ),
-            "overview": SheetConfig(
-                domain_cls=OverviewEntry,
-                parser_func=parse_overview_entries,
+            "VoltageDomains": SheetConfig(
+                domain_cls=VoltageDomainEntry,
+                parser_func=parse_voltage_domains,
             ),
         }
         sheets = import_xlsx(session, path, sheet_configs=sheet_configs)
@@ -372,7 +377,7 @@ def import_xlsx(
     blob = path.read_bytes()
 
     if sheet_configs is None:
-        sheet_configs = {}
+        sheet_configs = _load_configs_from_db(session)
 
     if with_formulas:
         # Load formulas first (data_only=False), then overlay cached values
@@ -452,3 +457,57 @@ def _resolve_parser_func(ref: str) -> Callable[..., None] | None:
     module_path, func_name = ref.rsplit(":", 1)
     mod = importlib.import_module(module_path)
     return getattr(mod, func_name)
+
+
+# ── Domain registry (populated by the host package) ────────────────
+# Hosts (e.g. pinmap) register their ORM classes and default field maps here
+# so that ``_load_configs_from_db`` can resolve ``SheetConfigEntry.domain_type``
+# strings back to concrete classes when ``sheet_configs`` is omitted.
+DOMAIN_REGISTRY: dict[str, type] = {}
+FIELD_MAP_REGISTRY: dict[str, dict[str, str]] = {}
+
+
+def register_domain(
+    domain_type: str,
+    domain_cls: type,
+    field_map: dict[str, str] | None = None,
+) -> None:
+    """Register a domain ORM class for DB-persisted SheetConfigEntry resolution.
+
+    Call this once at host-package import time. Only needed if you intend to
+    store per-sheet configs in the database (``SheetConfigEntry``) and want
+    ``import_xlsx(session, path)`` to work without an explicit ``sheet_configs``
+    argument.
+    """
+    DOMAIN_REGISTRY[domain_type] = domain_cls
+    if field_map is not None:
+        FIELD_MAP_REGISTRY[domain_type] = field_map
+
+
+def _load_configs_from_db(session: Session) -> dict[str, SheetConfig]:
+    """Load SheetConfigEntry rows from DB and convert to SheetConfig dict.
+
+    Returns an empty dict if the table has no rows; host packages may pre-seed
+    it (see :class:`excel_toolkit.SheetConfigEntry`) and register their domain
+    classes via :func:`register_domain`.
+    """
+    import json
+    from excel_toolkit.models import SheetConfigEntry
+
+    configs: dict[str, SheetConfig] = {}
+    for entry in session.query(SheetConfigEntry).all():
+        domain_cls = DOMAIN_REGISTRY.get(entry.domain_type) if entry.domain_type else None
+        if entry.field_map_json:
+            field_map = json.loads(entry.field_map_json)
+        elif entry.domain_type:
+            field_map = FIELD_MAP_REGISTRY.get(entry.domain_type)
+        else:
+            field_map = None
+        pfunc = _resolve_parser_func(entry.parser_func_ref) if entry.parser_func_ref else None
+        configs[entry.pattern] = SheetConfig(
+            field_map=field_map,
+            domain_cls=domain_cls,
+            header_row=entry.header_row,
+            parser_func=pfunc,
+        )
+    return configs
