@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 import subprocess
 from datetime import datetime
@@ -61,10 +62,19 @@ def _find_libreoffice() -> str:
 
 # ── XLS → XLSX conversion ───────────────────────────────────────────
 
+_CACHE_DIR_ENV = "DSM_CACHE_DIR"
+
+
 def _get_cache_dir() -> Path:
-    """Return __dsm__/ in cwd, creating it if needed."""
-    d = Path.cwd() / _CACHE_DIR_NAME
-    d.mkdir(exist_ok=True)
+    """Return the cache directory, creating it if needed.
+
+    Resolution order:
+        1. $DSM_CACHE_DIR (set by --cache-dir flag or shell)
+        2. cwd / __dsm__/   (fallback)
+    """
+    override = os.environ.get(_CACHE_DIR_ENV)
+    d = Path(override) if override else Path.cwd() / _CACHE_DIR_NAME
+    d.mkdir(parents=True, exist_ok=True)
     return d
 
 

@@ -152,3 +152,4 @@ dsm export --db regmap.db -o regmap_modified.xlsx
 - Patch merge는 원본 Excel BLOB 위에 변경분만 덮어쓰기 (서식/머지/스타일 보존).
 - `dsm sql`로 UPDATE/DELETE 시 `change_log` 테이블에 자동 기록 (SQLite 트리거).
 - Cache DB(`.xlsx` 기반 자동 생성)는 원본 변경 시 재생성되므로 audit도 초기화됨.
+- Cache 디렉토리는 `--cache-dir <path>` 또는 `$DSM_CACHE_DIR`로 override 가능 (default: `./__dsm__/`). 우선순위: flag > env > default.

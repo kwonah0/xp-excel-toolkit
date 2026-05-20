@@ -25,8 +25,19 @@ def _open_db(path: Path):
 
 @click.group()
 @click.version_option(version="0.2.0", prog_name="dsm")
-def main():
+@click.option(
+    "--cache-dir",
+    type=click.Path(path_type=Path),
+    envvar="DSM_CACHE_DIR",
+    default=None,
+    help="Cache directory for auto-imported DBs / converted xlsx "
+         "(default: ./__dsm__/, env: DSM_CACHE_DIR).",
+)
+def main(cache_dir: Path | None):
     """DSM — Design Specification Manager for register map Excel files."""
+    if cache_dir is not None:
+        import os
+        os.environ["DSM_CACHE_DIR"] = str(cache_dir.resolve())
 
 
 # -- import -----------------------------------------------------------------
