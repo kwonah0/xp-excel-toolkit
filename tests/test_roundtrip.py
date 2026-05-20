@@ -1,168 +1,188 @@
-"""End-to-end test: create regmap sample -> import -> modify -> export -> verify."""
+"""End-to-end smoke tests for excel_toolkit.
 
-import os
-import sys
-from pathlib import Path
+Covers the round-trip: synthetic xlsx → import (cells + merges + styles +
+comments + domain ORM rows) → modify a domain row → export with original
+formatting preserved → re-load and assert.
+"""
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-os.chdir(PROJECT_ROOT)
+from __future__ import annotations
 
-from dsm import (
-    Base, ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook,
-    REGMAP_FIELD_MAP, Register,
-    import_sheet, export_regmap_xlsx, init_db,
+import openpyxl
+
+from excel_toolkit import (
+    ExcelCell,
+    ExcelMerge,
+    ExcelWorkbook,
+    ExportHandler,
+    SheetConfig,
+    export_domain_xlsx,
+    import_xlsx,
+    init_db,
 )
 
-sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
-from create_regmap_sample import create_regmap_xlsx
+
+def test_import_cells_and_merges(sample_xlsx):
+    Session = init_db("sqlite:///:memory:")
+    with Session() as session:
+        sheets = import_xlsx(session, sample_xlsx, sheet_configs={})
+        session.commit()
+
+        names = {s.name for s in sheets}
+        assert names == {"Pinmap_A", "Notes"}
+
+        pinmap = next(s for s in sheets if s.name == "Pinmap_A")
+
+        # Header row written: title at row 1, headers at row 2, 4 data rows
+        # Total cells with content >= 3 (title) + 3 (headers) + 4*3 (data) = 18
+        cells = session.query(ExcelCell).filter_by(sheet_id=pinmap.id).all()
+        non_empty = [c for c in cells if c.raw_value]
+        assert len(non_empty) >= 18
+
+        # Two merges: title (1 horizontal) + Dir group (1 vertical)
+        merges = session.query(ExcelMerge).filter_by(sheet_id=pinmap.id).all()
+        assert len(merges) == 2
+
+        horizontal = [m for m in merges if m.max_col > m.min_col]
+        vertical = [m for m in merges if m.max_row > m.min_row]
+        assert len(horizontal) == 1
+        assert len(vertical) == 1
 
 
-def banner(text: str):
-    print(f"\n{'='*60}")
-    print(f"  {text}")
-    print(f"{'='*60}")
+def test_import_styles_and_comments(sample_xlsx):
+    Session = init_db("sqlite:///:memory:")
+    with Session() as session:
+        sheets = import_xlsx(session, sample_xlsx, sheet_configs={})
+        session.commit()
+
+        pinmap = next(s for s in sheets if s.name == "Pinmap_A")
+
+        # Header row 2 has yellow fill + bold
+        header = (
+            session.query(ExcelCell)
+            .filter_by(sheet_id=pinmap.id, row=2, col=1)
+            .one()
+        )
+        assert header.style is not None
+        assert header.style.get("bg_color") == "#FFFF00"
+        assert header.style.get("font_bold") is True
+
+        # VDD cell has comment + top border
+        vdd = (
+            session.query(ExcelCell)
+            .filter_by(sheet_id=pinmap.id, row=3, col=2)
+            .one()
+        )
+        assert vdd.comment is not None
+        assert "Supply" in vdd.comment
+        assert vdd.style and vdd.style.get("border_top") == "thin"
 
 
-def classify_merges(merges):
-    h, v = [], []
-    for m in merges:
-        if m.max_col > m.min_col:
-            h.append(m)
-        else:
-            v.append(m)
-    return h, v
+def test_domain_rows_via_sheet_config(sample_xlsx, pin_field_map, pin_domain_cls):
+    """SheetConfig with field_map + domain_cls produces ORM rows."""
+    sheet_configs = {
+        "Pinmap_*": SheetConfig(
+            field_map=pin_field_map,
+            domain_cls=pin_domain_cls,
+        ),
+    }
+
+    Session = init_db("sqlite:///:memory:")
+    with Session() as session:
+        import_xlsx(session, sample_xlsx, sheet_configs=sheet_configs)
+        session.commit()
+
+        rows = session.query(pin_domain_cls).order_by(pin_domain_cls.excel_row).all()
+        assert len(rows) == 4
+
+        # The header is at row 2; data starts at row 3
+        first = rows[0]
+        assert first.pin_no == "A1"
+        assert first.name == "VDD"
+        assert first.direction == "PWR"
+        assert first.excel_row == 3
+
+        # Vertical merge fills the merged Dir cell on row 6
+        scl = next(r for r in rows if r.pin_no == "A4")
+        assert scl.direction == "I/O"   # filled from merge origin (row 5)
 
 
-def test_regmap():
-    banner("TEST: Register Map Roundtrip (.xlsx)")
+def test_roundtrip_modify_and_export(tmp_path, sample_xlsx, pin_field_map, pin_domain_cls):
+    """Modify a domain row, export, reload, and confirm both the new value AND
+    the original formatting (merge ranges, header fill) survive."""
+    sheet_configs = {
+        "Pinmap_*": SheetConfig(
+            field_map=pin_field_map,
+            domain_cls=pin_domain_cls,
+        ),
+    }
 
-    # -- 1. Create sample -----------------------------------------------
-    xlsx_path = create_regmap_xlsx()
+    Session = init_db("sqlite:///:memory:")
+    with Session() as session:
+        import_xlsx(session, sample_xlsx, sheet_configs=sheet_configs)
+        session.commit()
 
-    # -- 2. Import ------------------------------------------------------
-    db_path = "sqlite:///test_regmap.db"
-    Path("test_regmap.db").unlink(missing_ok=True)
+        # Mutate the SDA row
+        sda = session.query(pin_domain_cls).filter_by(pin_no="A3").one()
+        sda.name = "SDA_NEW"
+        session.commit()
 
-    SessionMaker = init_db(db_path)
-    session = SessionMaker()
+        out = tmp_path / "out.xlsx"
+        handlers = [
+            ExportHandler(
+                pattern="Pinmap_*",
+                field_map=pin_field_map,
+                domain_cls=pin_domain_cls,
+            ),
+        ]
+        export_domain_xlsx(session, out, handlers)
 
-    column_map: dict[str, int] = {}
-    sheet = import_sheet(
-        session, xlsx_path,
-        field_map=REGMAP_FIELD_MAP,
-        domain_cls=Register,
-        column_map=column_map,
-    )
-    session.commit()
+        # Sanity: workbook exists in DB
+        wb_obj = session.query(ExcelWorkbook).first()
+        assert wb_obj is not None
 
-    print(f"\n[Import] Sheet: {sheet.name}, header_row: {sheet.header_row}")
-    print(f"[Import] Column map: {column_map}")
+    # Re-read exported xlsx
+    wb_check = openpyxl.load_workbook(out)
+    assert set(wb_check.sheetnames) == {"Pinmap_A", "Notes"}
 
-    # -- 3. Verify registers --------------------------------------------
-    regs = session.query(Register).order_by(Register.excel_row).all()
-    print(f"\n[Import] {len(regs)} registers loaded:")
-    for r in regs:
-        print(f"  row={r.excel_row}: {r.type:>3} idx={r.indx} p={r.page} "
-              f"para={r.para} {r.name:>8}  "
-              f"D7={r.d7}  D6={r.d6}  D5={r.d5}  D4={r.d4}  "
-              f"D3={r.d3}  D2={r.d2}  D1={r.d1}  D0={r.d0}  init={r.init}")
+    ws = wb_check["Pinmap_A"]
 
-    assert len(regs) == 17, f"Expected 17 registers, got {len(regs)}"
-    print(f"[Import] {len(regs)} registers loaded OK")
+    # Mutated value made it through
+    assert ws.cell(row=5, column=2).value == "SDA_NEW"
 
-    # All values should be strings
-    for r in regs:
-        for field in ["type", "indx", "page", "para", "name", "init"]:
-            val = getattr(r, field)
-            assert val is None or isinstance(val, str), f"Field {field} is not str: {val!r}"
-    print("[Import] All values are strings OK")
+    # Other domain values unchanged
+    assert ws.cell(row=3, column=2).value == "VDD"
 
-    # Check vertical merge fill (INDX, PAGE) — SENSOR_A spans rows 2-5, all share indx=57
-    reg_sensor = session.query(Register).filter_by(name="SENSOR_A", para="1").first()
-    assert reg_sensor.indx == "57", f"Expected INDX=57, got {reg_sensor.indx}"
-    assert reg_sensor.page == "0", f"Expected PAGE=0, got {reg_sensor.page}"
-    print("[Import] Vertical merge fill (INDX/PAGE) OK")
+    # Non-domain sheet untouched
+    notes = wb_check["Notes"]
+    assert notes.cell(row=1, column=1).value == "Free-form notes"
 
-    # Check horizontal merge fill (bit fields) — SENSOR_A row 2 has MODE[1:0] in D6-D5
-    reg_ctrl = session.query(Register).filter_by(name="SENSOR_A", para="0").first()
-    assert reg_ctrl.d6 == "MODE[1:0]", f"Expected MODE[1:0] in D6, got {reg_ctrl.d6}"
-    assert reg_ctrl.d5 == "MODE[1:0]", f"Expected MODE[1:0] in D5, got {reg_ctrl.d5}"
-    print("[Import] Horizontal merge fill (bit fields) OK")
+    # Merges preserved (1 horizontal title + 1 vertical Dir = 2)
+    assert len(ws.merged_cells.ranges) == 2
 
-    # -- 4. Verify merges -----------------------------------------------
-    merges = session.query(ExcelMerge).filter_by(sheet_id=sheet.id).all()
-    h_merges, v_merges = classify_merges(merges)
-    print(f"\n[Merge] Total: {len(merges)} — Horizontal: {len(h_merges)}, Vertical: {len(v_merges)}")
-
-    for m in merges:
-        kind = "H" if m.max_col > m.min_col else "V"
-        print(f"  r{m.min_row}c{m.min_col}:r{m.max_row}c{m.max_col} ({kind})")
-
-    assert len(h_merges) == 26, f"Expected 26 horizontal merges, got {len(h_merges)}"
-    assert len(v_merges) == 16, f"Expected 16 vertical merges, got {len(v_merges)}"
-    print("[Merge] Merge counts OK")
-
-    # -- 5. Verify styles (colors) --------------------------------------
-    # Green cell (1-bit, e.g. EN at row 2, D7 = col 6)
-    en_cell = session.query(ExcelCell).filter_by(
-        sheet_id=sheet.id, row=2, col=6
-    ).first()
-    assert en_cell and en_cell.style, "EN cell should have style"
-    print(f"[Style] EN (1-bit green): {en_cell.style}")
-
-    # Yellow cell (multi-bit, e.g. MODE[1:0] origin at row 2, D6 = col 7)
-    mode_cell = session.query(ExcelCell).filter_by(
-        sheet_id=sheet.id, row=2, col=7
-    ).first()
-    assert mode_cell and mode_cell.style, "MODE cell should have style"
-    print(f"[Style] MODE[1:0] (merged yellow): {mode_cell.style}")
-
-    # Gray cell (RSVD at row 2, D3 = col 10)
-    rsvd_cell = session.query(ExcelCell).filter_by(
-        sheet_id=sheet.id, row=2, col=10
-    ).first()
-    assert rsvd_cell and rsvd_cell.style, "RSVD cell should have style"
-    print(f"[Style] RSVD (gray): {rsvd_cell.style}")
-
-    # -- 6. Modify + Export ---------------------------------------------
-    print("\n[Modify] Changing SENSOR_A[para=0].INIT from 0x00 to 0x80...")
-    reg_ctrl.init = "0x80"
-    session.commit()
-
-    wb = session.query(ExcelWorkbook).first()
-    output = Path("samples/regmap_output.xlsx")
-    export_regmap_xlsx(session, wb.id, output, column_map=column_map)
-    print(f"[Export] Written to: {output}")
-
-    # -- 7. Verify export -----------------------------------------------
-    import openpyxl as oxl
-    wb_check = oxl.load_workbook(output)
-    ws_check = wb_check.active
-
-    # INIT value updated
-    init_cell = ws_check.cell(row=2, column=14)
-    assert init_cell.value == "0x80", f"Expected 0x80, got {init_cell.value}"
-    print("[Verify] INIT value updated OK")
-
-    # Merges preserved
-    merge_count = len(ws_check.merged_cells.ranges)
-    print(f"[Verify] Merged ranges preserved: {merge_count}")
-    assert merge_count == 42, f"Expected 42 merges, got {merge_count}"
-
-    # Colors preserved (check EN cell green)
-    en_check = ws_check.cell(row=2, column=6)
-    if en_check.fill and en_check.fill.fgColor:
-        print(f"[Verify] EN cell color preserved: {en_check.fill.fgColor.rgb}")
-
-    # MODE[1:0] yellow preserved
-    mode_check = ws_check.cell(row=2, column=7)
-    if mode_check.fill and mode_check.fill.fgColor:
-        print(f"[Verify] MODE cell color preserved: {mode_check.fill.fgColor.rgb}")
+    # Header fill preserved
+    hdr_fill = ws.cell(row=2, column=1).fill
+    assert hdr_fill.fgColor.rgb.endswith("FFFF00")
 
     wb_check.close()
-    session.close()
-    print("\n  Register map roundtrip PASSED")
 
 
-if __name__ == "__main__":
-    test_regmap()
+def test_export_from_cells_no_blob(tmp_path, sample_xlsx):
+    """export_from_cells builds an xlsx from cell/merge records alone."""
+    from excel_toolkit import export_from_cells
+
+    Session = init_db("sqlite:///:memory:")
+    with Session() as session:
+        sheets = import_xlsx(session, sample_xlsx, sheet_configs={})
+        session.commit()
+
+        pinmap = next(s for s in sheets if s.name == "Pinmap_A")
+        out = tmp_path / "from_cells.xlsx"
+        export_from_cells(session, pinmap.id, out)
+
+    wb_check = openpyxl.load_workbook(out)
+    ws = wb_check.active
+    assert ws.title == "Pinmap_A"
+    assert ws.cell(row=2, column=1).value == "Pin"          # header survived
+    assert ws.cell(row=3, column=1).value == "A1"           # data survived
+    assert len(ws.merged_cells.ranges) == 2                 # merges survived
+    wb_check.close()
