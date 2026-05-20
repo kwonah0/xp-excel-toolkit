@@ -44,7 +44,7 @@ class MergeResolver:
     @classmethod
     def from_db(cls, session: Session, sheet_id: int) -> MergeResolver:
         """Build a MergeResolver from DB records (no xlsx file needed)."""
-        from dsm.models import ExcelCell, ExcelMerge
+        from excel_toolkit.models import ExcelCell, ExcelMerge
 
         resolver = cls.__new__(cls)
         resolver._merge_map = {}

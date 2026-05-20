@@ -14,8 +14,8 @@ from openpyxl.cell.cell import MergedCell
 from openpyxl.comments import Comment
 from openpyxl.worksheet.worksheet import Worksheet
 
-from dsm.domain_models import REGMAP_FIELD_MAP, Register
-from dsm.models import ExcelSheet, ExcelWorkbook, init_db
+from excel_toolkit.domain_models import REGMAP_FIELD_MAP, Register
+from excel_toolkit.models import ExcelSheet, ExcelWorkbook, init_db
 
 
 _REG_FIELDS = list(REGMAP_FIELD_MAP.values())

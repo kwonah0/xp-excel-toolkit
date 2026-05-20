@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from dsm.diff.models import DiffCell, DiffMemmap, DiffRegister, DiffResult, _REG_FIELDS, _MEMMAP_FIELDS
-from dsm.diff.engine import _reg_changes, _mm_changes
+from excel_toolkit.diff.models import DiffCell, DiffMemmap, DiffRegister, DiffResult, _REG_FIELDS, _MEMMAP_FIELDS
+from excel_toolkit.diff.engine import _reg_changes, _mm_changes
 
 
 def _col_letter(col: int) -> str:

@@ -8,12 +8,12 @@ from pathlib import Path
 
 import click
 
-from dsm.models import init_db
+from excel_toolkit.models import init_db
 
 
 def _resolve_db(path: Path, with_formulas: bool = False) -> tuple[Path, bool]:
     """Resolve .xlsx/.xls/.db path to a DB path, auto-importing to __dsm__/ if needed."""
-    from dsm.convert import resolve_db
+    from excel_toolkit.convert import resolve_db
     return resolve_db(path, on_progress=click.echo, with_formulas=with_formulas)
 
 
@@ -33,7 +33,7 @@ def main():
 
 def _ensure_xlsx(path: Path) -> Path:
     """If path is .xls, convert to .xlsx using LibreOffice (cached in __dsm__/)."""
-    from dsm.convert import ensure_xlsx_cached
+    from excel_toolkit.convert import ensure_xlsx_cached
     return ensure_xlsx_cached(path, on_progress=lambda msg: click.echo(msg))
 
 
@@ -51,7 +51,7 @@ def _import_cmd(xlsx_path: Path, db_path: Path | None, with_formulas: bool = Fal
 
     t0 = time.perf_counter()
 
-    from dsm.xlsx_parser import import_xlsx
+    from excel_toolkit.xlsx_parser import import_xlsx
     with Session() as session:
         sheets = import_xlsx(session, xlsx_path, on_progress=click.echo,
                              with_formulas=with_formulas)
@@ -121,12 +121,12 @@ def split(xlsx_path: Path | None, db_path: Path | None, output_dir: Path | None,
     t0 = time.perf_counter()
 
     with Session() as session:
-        from dsm.models import ExcelWorkbook
+        from excel_toolkit.models import ExcelWorkbook
 
         if xlsx_path is not None and force_reimport:
             xlsx_resolved = _ensure_xlsx(xlsx_path)
             click.echo(f"Re-importing {xlsx_resolved.name}...")
-            from dsm.xlsx_parser import import_xlsx
+            from excel_toolkit.xlsx_parser import import_xlsx
             import_xlsx(session, xlsx_resolved, on_progress=click.echo)
             session.commit()
             workbook_name = xlsx_resolved.name
@@ -143,12 +143,12 @@ def split(xlsx_path: Path | None, db_path: Path | None, output_dir: Path | None,
 
         click.echo(f"Splitting into {output_dir}...")
         if parallel:
-            from dsm.parallel import parallel_split_regmap
+            from excel_toolkit.parallel import parallel_split_regmap
             # parallel_split_regmap needs xlsx_path for .name lookup;
             # pass workbook_name as Path so .name works
             results = parallel_split_regmap(session, Path(workbook_name), output_dir)
         else:
-            from dsm.splitter import split_regmap_from_db
+            from excel_toolkit.splitter import split_regmap_from_db
             results = split_regmap_from_db(session, workbook_name, output_dir,
                                            on_progress=click.echo)
 
@@ -174,7 +174,7 @@ def sheets(db_path: Path):
     Session = _open_db(db_path)
 
     with Session() as session:
-        from dsm.models import ExcelSheet, ExcelWorkbook
+        from excel_toolkit.models import ExcelSheet, ExcelWorkbook
         for s in session.query(ExcelSheet).all():
             wb = session.get(ExcelWorkbook, s.workbook_id)
             click.echo(f"  [{s.id}] {s.name}  (workbook={wb.filename if wb else '?'}, header_row={s.header_row})")
@@ -189,8 +189,8 @@ def ips(db_path: Path, sheet_name: str | None):
 
     with Session() as session:
         from sqlalchemy import func
-        from dsm.domain_models import Register
-        from dsm.models import ExcelSheet
+        from excel_toolkit.domain_models import Register
+        from excel_toolkit.models import ExcelSheet
 
         q = (
             session.query(ExcelSheet.name, Register.name, func.count(Register.id))
@@ -218,8 +218,8 @@ def registers(db_path: Path, sheet_name: str | None, ip_name: str | None, as_jso
     Session = _open_db(db_path)
 
     with Session() as session:
-        from dsm.domain_models import Register
-        from dsm.models import ExcelSheet
+        from excel_toolkit.domain_models import Register
+        from excel_toolkit.models import ExcelSheet
 
         q = session.query(Register)
         if sheet_name:
@@ -267,7 +267,7 @@ def memmap(db_path: Path):
     Session = _open_db(db_path)
 
     with Session() as session:
-        from dsm.domain_models import MemoryMapEntry
+        from excel_toolkit.domain_models import MemoryMapEntry
         entries = session.query(MemoryMapEntry).order_by(MemoryMapEntry.excel_row).all()
         click.echo(f"{'BASEADDR':>10} {'Group':>12} {'midgroup':>10} "
                    f"{'Comment':<30} {'special':<10}")
@@ -348,7 +348,7 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
       dsm diff old.db new.db --all
       dsm diff old.db new.db --save-db
     """
-    from dsm.diff import (
+    from excel_toolkit.diff import (
         diff_with_auto_import, format_csv, format_daff, format_diff,
         format_summary, save_diff_to_db,
     )
@@ -390,7 +390,7 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
     def _format_output(chosen_fmt: str) -> str:
         if chosen_fmt == "json":
             import json
-            from dsm.diff import _REG_FIELDS, _MEMMAP_FIELDS, _reg_changes, _mm_changes
+            from excel_toolkit.diff import _REG_FIELDS, _MEMMAP_FIELDS, _reg_changes, _mm_changes
 
             def _reg_to_json(r, side: str) -> dict:
                 return {f: getattr(r, f"{side}_{f}") for f in _REG_FIELDS}
@@ -432,7 +432,7 @@ def diff(path_a: Path, path_b: Path, diff_db_path: Path | None, verbose: bool,
                 ],
             }
             if include_cells:
-                from dsm.diff.formatter import _col_letter
+                from excel_toolkit.diff.formatter import _col_letter
                 cell_list = []
                 for cd in result.cells:
                     entry = {
@@ -532,7 +532,7 @@ def merge(input_dir: Path, output: Path | None, base: Path | None):
 
 
 def _do_stack_merge(input_dir: Path, output: Path | None):
-    from dsm.splitter import merge_split_files
+    from excel_toolkit.splitter import merge_split_files
 
     if output is None:
         output = input_dir.parent / f"{input_dir.name}_merged.xlsx"
@@ -550,8 +550,8 @@ def _do_stack_merge(input_dir: Path, output: Path | None):
 
 def _do_patch_merge(input_dir: Path, output: Path | None, base: Path):
     from collections import defaultdict
-    from dsm.diff import _resolve_db
-    from dsm.patcher import patch_merge
+    from excel_toolkit.diff import _resolve_db
+    from excel_toolkit.patcher import patch_merge
 
     click.echo(f"Resolving base: {base}")
     db_path, _is_temp = _resolve_db(base, on_progress=click.echo)
@@ -607,7 +607,7 @@ def export(db_path: Path, output: Path):
       dsm export --db regmap.db -o modified.xlsx
       dsm export --db regmap.xlsx -o modified.xlsx
     """
-    from dsm.exporter import export_xlsx
+    from excel_toolkit.exporter import export_xlsx
 
     Session = _open_db(db_path)
 
@@ -631,8 +631,8 @@ def config():
 def config_list(db_path: Path):
     """List current sheet configurations."""
     import json
-    from dsm.models import SheetConfigEntry
-    from dsm.domain_models import seed_default_configs
+    from excel_toolkit.models import SheetConfigEntry
+    from excel_toolkit.domain_models import seed_default_configs
 
     Session = _open_db(db_path)
     with Session() as session:
@@ -670,8 +670,8 @@ def config_add(db_path: Path, pattern: str, domain_type: str | None,
                field_map_json: str | None, header_row: int | None):
     """Add a sheet configuration entry."""
     import json
-    from dsm.models import SheetConfigEntry
-    from dsm.domain_models import DOMAIN_REGISTRY, FIELD_MAP_REGISTRY
+    from excel_toolkit.models import SheetConfigEntry
+    from excel_toolkit.domain_models import DOMAIN_REGISTRY, FIELD_MAP_REGISTRY
 
     if domain_type and domain_type not in DOMAIN_REGISTRY:
         raise click.UsageError(
@@ -706,7 +706,7 @@ def config_add(db_path: Path, pattern: str, domain_type: str | None,
 @click.argument("config_id", type=int)
 def config_remove(db_path: Path, config_id: int):
     """Remove a sheet configuration by ID."""
-    from dsm.models import SheetConfigEntry
+    from excel_toolkit.models import SheetConfigEntry
 
     Session = _open_db(db_path)
     with Session() as session:
@@ -722,8 +722,8 @@ def config_remove(db_path: Path, config_id: int):
 @click.option("--db", "db_path", type=click.Path(exists=True, path_type=Path), required=True)
 def config_reset(db_path: Path):
     """Reset configurations to defaults."""
-    from dsm.models import SheetConfigEntry
-    from dsm.domain_models import seed_default_configs
+    from excel_toolkit.models import SheetConfigEntry
+    from excel_toolkit.domain_models import seed_default_configs
 
     Session = _open_db(db_path)
     with Session() as session:
@@ -806,7 +806,7 @@ def log_show(db_path: Path, table_name: str | None, limit: int):
       dsm log show --db regmap.db --table register
       dsm log show --db regmap.db --last 50
     """
-    from dsm.models import ChangeLog
+    from excel_toolkit.models import ChangeLog
 
     Session = _open_db(db_path)
     with Session() as session:
@@ -843,7 +843,7 @@ def log_undo(log_id: int, db_path: Path):
       dsm log undo 42 --db regmap.db
     """
     from sqlalchemy import text as sa_text
-    from dsm.models import ChangeLog
+    from excel_toolkit.models import ChangeLog
 
     Session = _open_db(db_path)
     with Session() as session:
@@ -871,7 +871,7 @@ def log_undo(log_id: int, db_path: Path):
 @click.confirmation_option(prompt="Clear all change history?")
 def log_clear(db_path: Path):
     """Clear all change history."""
-    from dsm.models import ChangeLog
+    from excel_toolkit.models import ChangeLog
 
     Session = _open_db(db_path)
     with Session() as session:

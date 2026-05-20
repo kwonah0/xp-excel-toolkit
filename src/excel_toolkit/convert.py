@@ -12,7 +12,7 @@ from pathlib import Path
 # LibreOffice executable path. Set this if auto-detection fails.
 LIBREOFFICE_PATH: str | None = None
 
-_CACHE_DIR_NAME = "__dsm__"
+_CACHE_DIR_NAME = "__xltk__"
 
 _SEARCH_PATHS = [
     "/usr/bin/libreoffice",
@@ -55,14 +55,14 @@ def _find_libreoffice() -> str:
             return candidate
 
     raise FileNotFoundError(
-        "LibreOffice not found. Install it or set dsm.convert.LIBREOFFICE_PATH."
+        "LibreOffice not found. Install it or set excel_toolkit.convert.LIBREOFFICE_PATH."
     )
 
 
 # ── XLS → XLSX conversion ───────────────────────────────────────────
 
 def _get_cache_dir() -> Path:
-    """Return __dsm__/ in cwd, creating it if needed."""
+    """Return __xltk__/ in cwd, creating it if needed."""
     d = Path.cwd() / _CACHE_DIR_NAME
     d.mkdir(exist_ok=True)
     return d
@@ -78,7 +78,7 @@ def convert_xls_to_xlsx(
     Args:
         xls_path: Path to the .xls file.
         output_dir: Directory for the output .xlsx file.
-                    If None, uses __dsm__/ in cwd.
+                    If None, uses __xltk__/ in cwd.
         timeout: Timeout in seconds for the conversion process.
 
     Returns:
@@ -184,10 +184,10 @@ def resolve_db(
     """Resolve any file path to a DB path, auto-importing if needed.
 
     - .db → return as-is
-    - .xlsx/.xls → ensure xlsx, import to __dsm__/<stem>_<hash>.db
+    - .xlsx/.xls → ensure xlsx, import to __xltk__/<stem>_<hash>.db
 
     Returns:
-        (db_path, is_cached) — is_cached=True if DB is in __dsm__/
+        (db_path, is_cached) — is_cached=True if DB is in __xltk__/
     """
     if path.suffix == ".db":
         return path, False
@@ -214,8 +214,8 @@ def resolve_db(
         else:
             print(msg)
 
-        from dsm.models import init_db
-        from dsm.xlsx_parser import import_xlsx
+        from excel_toolkit.models import init_db
+        from excel_toolkit.xlsx_parser import import_xlsx
 
         Session = init_db(f"sqlite:///{cached_db}")
         with Session() as session:
@@ -231,7 +231,7 @@ def ensure_xlsx_cached(
     path: Path,
     on_progress=None,
 ) -> Path:
-    """If path is .xls, convert to .xlsx and cache in __dsm__/.
+    """If path is .xls, convert to .xlsx and cache in __xltk__/.
 
     If path is already .xlsx, validates it is a real OOXML file (not a
     renamed binary .xls).

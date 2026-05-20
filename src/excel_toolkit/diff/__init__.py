@@ -1,6 +1,6 @@
 """DSM diff package — compare two databases."""
 
-from dsm.diff.models import (
+from excel_toolkit.diff.models import (
     DiffBase,
     DiffCell,
     DiffMemmap,
@@ -11,7 +11,7 @@ from dsm.diff.models import (
     _REG_FIELDS,
     init_diff_db,
 )
-from dsm.diff.engine import (
+from excel_toolkit.diff.engine import (
     _mm_changes,
     _reg_changes,
     _resolve_db,
@@ -19,7 +19,7 @@ from dsm.diff.engine import (
     diff_with_auto_import,
     save_diff_to_db,
 )
-from dsm.diff.formatter import format_csv, format_daff, format_diff, format_summary
+from excel_toolkit.diff.formatter import format_csv, format_daff, format_diff, format_summary
 
 __all__ = [
     "DiffBase",

@@ -19,8 +19,8 @@ from openpyxl.worksheet.worksheet import Worksheet
 from sqlalchemy import insert
 from sqlalchemy.orm import Session
 
-from dsm.domain_models import OverviewEntry
-from dsm.xlsx_parser import _BULK_CHUNK, _extract_cell_value
+from excel_toolkit.domain_models import OverviewEntry
+from excel_toolkit.xlsx_parser import _BULK_CHUNK, _extract_cell_value
 
 
 def parse_overview_entries(

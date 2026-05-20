@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import ForeignKey, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from dsm.models import Base, ExcelSheet
+from excel_toolkit.models import Base, ExcelSheet
 
 
 # -- GENERATED: Register (level2_* sheets) -----------------------
@@ -128,7 +128,7 @@ OVERVIEW_FIELDS = [
 
 # -- Audit target registration -------------------------------------------------
 
-from dsm.models import register_audit_target
+from excel_toolkit.models import register_audit_target
 
 register_audit_target("register", REGMAP_FIELDS)
 register_audit_target("memorymap_entry", MEMMAP_FIELDS)
@@ -160,14 +160,14 @@ DEFAULT_SHEET_CONFIGS = [
      "field_map": MEMMAP_FIELD_MAP, "header_row": None},
     {"pattern": "Overview", "domain_type": "overview_entry",
      "field_map": None, "header_row": None,
-     "parser_func": "dsm.parsers.overview:parse_overview_entries"},
+     "parser_func": "excel_toolkit.parsers.overview:parse_overview_entries"},
 ]
 
 
 def seed_default_configs(session) -> None:
     """Insert default SheetConfigEntry rows if table is empty."""
     import json
-    from dsm.models import SheetConfigEntry
+    from excel_toolkit.models import SheetConfigEntry
 
     if session.query(SheetConfigEntry).count() > 0:
         return
@@ -184,7 +184,7 @@ def seed_default_configs(session) -> None:
 
 
 def _default_sheet_configs():
-    from dsm.xlsx_parser import SheetConfig
+    from excel_toolkit.xlsx_parser import SheetConfig
 
     return {
         "level2_*": SheetConfig(field_map=REGMAP_FIELD_MAP, domain_cls=Register),
@@ -195,5 +195,5 @@ def _default_sheet_configs():
 
 
 def _get_overview_parser():
-    from dsm.parsers.overview import parse_overview_entries
+    from excel_toolkit.parsers.overview import parse_overview_entries
     return parse_overview_entries

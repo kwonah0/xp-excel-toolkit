@@ -11,10 +11,10 @@ from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 from sqlalchemy import distinct, insert
 from sqlalchemy.orm import Session
 
-from dsm.merge import MergeResolver
-from dsm.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook, SheetConfigEntry
-from dsm.domain_models import REGMAP_FIELD_MAP, Register
-from dsm.xlsx_parser import _import_ws, _BULK_CHUNK
+from excel_toolkit.merge import MergeResolver
+from excel_toolkit.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook, SheetConfigEntry
+from excel_toolkit.domain_models import REGMAP_FIELD_MAP, Register
+from excel_toolkit.xlsx_parser import _import_ws, _BULK_CHUNK
 
 
 def _find_register_sheets(
@@ -277,7 +277,7 @@ def _export_multi_sheet(
 ) -> None:
     """Export multiple ExcelSheet records into one xlsx file, each as a sheet."""
     from openpyxl.comments import Comment
-    from dsm.exporter import _apply_style
+    from excel_toolkit.exporter import _apply_style
 
     wb = openpyxl.Workbook()
     wb.remove(wb.active)  # remove default sheet

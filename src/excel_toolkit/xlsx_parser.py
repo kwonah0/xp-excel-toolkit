@@ -15,8 +15,8 @@ from openpyxl.worksheet.worksheet import Worksheet
 from sqlalchemy import insert
 from sqlalchemy.orm import Session
 
-from dsm.merge import MergeResolver
-from dsm.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
+from excel_toolkit.merge import MergeResolver
+from excel_toolkit.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
 
 # Max dicts per Core bulk insert execute() call (avoids SQLite variable limit)
 _BULK_CHUNK = 500
@@ -366,7 +366,7 @@ def import_xlsx(
 
     # Validate file format before reading
     if path.suffix.lower() == ".xlsx":
-        from dsm.convert import validate_xlsx_format
+        from excel_toolkit.convert import validate_xlsx_format
         validate_xlsx_format(path)
 
     blob = path.read_bytes()
@@ -460,8 +460,8 @@ def _load_configs_from_db(session: Session) -> dict[str, SheetConfig]:
     If no configs exist in DB, seeds defaults first.
     """
     import json
-    from dsm.models import SheetConfigEntry
-    from dsm.domain_models import DOMAIN_REGISTRY, FIELD_MAP_REGISTRY, seed_default_configs
+    from excel_toolkit.models import SheetConfigEntry
+    from excel_toolkit.domain_models import DOMAIN_REGISTRY, FIELD_MAP_REGISTRY, seed_default_configs
 
     seed_default_configs(session)
 
