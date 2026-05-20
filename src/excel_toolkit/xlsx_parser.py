@@ -372,7 +372,7 @@ def import_xlsx(
     blob = path.read_bytes()
 
     if sheet_configs is None:
-        sheet_configs = _load_configs_from_db(session)
+        sheet_configs = {}
 
     if with_formulas:
         # Load formulas first (data_only=False), then overlay cached values
@@ -452,33 +452,3 @@ def _resolve_parser_func(ref: str) -> Callable[..., None] | None:
     module_path, func_name = ref.rsplit(":", 1)
     mod = importlib.import_module(module_path)
     return getattr(mod, func_name)
-
-
-def _load_configs_from_db(session: Session) -> dict[str, SheetConfig]:
-    """Load SheetConfigEntry rows from DB and convert to SheetConfig dict.
-
-    If no configs exist in DB, seeds defaults first.
-    """
-    import json
-    from excel_toolkit.models import SheetConfigEntry
-    from excel_toolkit.domain_models import DOMAIN_REGISTRY, FIELD_MAP_REGISTRY, seed_default_configs
-
-    seed_default_configs(session)
-
-    configs: dict[str, SheetConfig] = {}
-    for entry in session.query(SheetConfigEntry).all():
-        domain_cls = DOMAIN_REGISTRY.get(entry.domain_type) if entry.domain_type else None
-        if entry.field_map_json:
-            field_map = json.loads(entry.field_map_json)
-        elif entry.domain_type:
-            field_map = FIELD_MAP_REGISTRY.get(entry.domain_type)
-        else:
-            field_map = None
-        pfunc = _resolve_parser_func(entry.parser_func_ref) if entry.parser_func_ref else None
-        configs[entry.pattern] = SheetConfig(
-            field_map=field_map,
-            domain_cls=domain_cls,
-            header_row=entry.header_row,
-            parser_func=pfunc,
-        )
-    return configs
