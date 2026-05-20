@@ -9,7 +9,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from dsm.models import ExcelSheet, ExcelWorkbook
+from excel_toolkit.models import ExcelSheet, ExcelWorkbook
 
 def _split_sheet_worker(args: tuple) -> dict[str, Any]:
     """Worker: split one level2 sheet into per-IP xlsx.
@@ -23,10 +23,10 @@ def _split_sheet_worker(args: tuple) -> dict[str, Any]:
     from openpyxl.comments import Comment
     from sqlalchemy import create_engine, distinct
     from sqlalchemy.orm import sessionmaker
-    from dsm.models import ExcelSheet, ExcelCell, ExcelMerge
-    from dsm.domain_models import Register
-    from dsm.merge import MergeResolver
-    from dsm.exporter import _apply_style
+    from excel_toolkit.models import ExcelSheet, ExcelCell, ExcelMerge
+    from excel_toolkit.domain_models import Register
+    from excel_toolkit.merge import MergeResolver
+    from excel_toolkit.exporter import _apply_style
 
     try:
         main_engine = create_engine(f"sqlite:///{main_db_path}", echo=False)

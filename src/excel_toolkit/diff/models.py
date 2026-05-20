@@ -9,8 +9,8 @@ from sqlalchemy.orm import (
 
 
 # Fields to compare (imported from domain models — kept as aliases for convenience)
-from dsm.domain_models import REGMAP_FIELDS as _REG_FIELDS  # noqa: E402
-from dsm.domain_models import MEMMAP_FIELDS as _MEMMAP_FIELDS  # noqa: E402
+from excel_toolkit.domain_models import REGMAP_FIELDS as _REG_FIELDS  # noqa: E402
+from excel_toolkit.domain_models import MEMMAP_FIELDS as _MEMMAP_FIELDS  # noqa: E402
 
 
 # ── Diff DB models ────────────────────────────────────────────────

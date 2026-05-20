@@ -11,10 +11,10 @@ from pathlib import Path
 from sqlalchemy import insert
 from sqlalchemy.orm import Session
 
-from dsm.domain_models import REGMAP_FIELD_MAP, Register, MemoryMapEntry
-from dsm.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook, init_db
+from excel_toolkit.domain_models import REGMAP_FIELD_MAP, Register, MemoryMapEntry
+from excel_toolkit.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook, init_db
 
-from dsm.diff.models import (
+from excel_toolkit.diff.models import (
     DiffBase, DiffCell, DiffMemmap, DiffMeta, DiffRegister, DiffResult,
     _MEMMAP_FIELDS, _REG_FIELDS, init_diff_db,
 )
@@ -817,5 +817,5 @@ def _resolve_db(
     with_formulas: bool = False,
 ) -> tuple[Path, bool]:
     """Delegate to convert.resolve_db."""
-    from dsm.convert import resolve_db
+    from excel_toolkit.convert import resolve_db
     return resolve_db(path, on_progress=on_progress, with_formulas=with_formulas)

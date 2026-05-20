@@ -15,8 +15,8 @@ from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 from openpyxl.worksheet.worksheet import Worksheet
 from sqlalchemy.orm import Session
 
-from dsm.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
-from dsm.domain_models import (
+from excel_toolkit.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
+from excel_toolkit.domain_models import (
     REGMAP_FIELD_MAP, MEMMAP_FIELD_MAP,
     Register, MemoryMapEntry, OverviewEntry,
 )
