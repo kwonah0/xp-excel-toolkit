@@ -7,6 +7,7 @@ Excel(.xlsx/.xls) ↔ SQLite round-trip 인프라 라이브러리. 워크북/시
 도메인 모델은 호스트 패키지(예: pinmap)가 정의. `excel_toolkit.Base`를 상속한 ORM 클래스 + `SheetConfig` 등록 + `ExportHandler` 로 round-trip 워크플로우를 완성한다.
 
 - 사용법: [docs/cookbook.md](docs/cookbook.md)
+- 실행 가능한 예제: [examples/pinmap_demo/](examples/pinmap_demo/) — `uv run python examples/pinmap_demo/main.py`
 
 ## 구조
 
@@ -37,4 +38,7 @@ uv run pytest
 
 # 패키지 import 확인
 uv run python -c "import excel_toolkit; print(excel_toolkit.__all__)"
+
+# end-to-end 데모 (호스트 패키지 사용 예제)
+uv run python examples/pinmap_demo/main.py
 ```

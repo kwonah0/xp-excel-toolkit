@@ -74,6 +74,8 @@ with Session() as session:
 
 ## 4. Recipe: 자체 도메인 모델 정의
 
+> **왜 `excel_toolkit.Base` 를 상속해야 하는가**: `excel_workbook` / `excel_sheet` / `excel_cell` / `excel_merge` 인프라 테이블과 너의 도메인 테이블이 **같은 `Base.metadata`** 에 들어가야 `init_db()` 가 한 번의 `create_all()` 로 둘 다 만들고, 도메인 테이블이 `excel_sheet.id` 를 FK로 잡을 수 있고, audit 트리거가 같은 엔진 위에 깔린다. 호스트가 별도 `Base` 를 만들면 metadata가 분리되어 이 모든 게 깨진다. **그냥 `from excel_toolkit import Base` 한 줄**.
+
 ```python
 # myapp/models.py
 from sqlalchemy import ForeignKey, Text
@@ -379,3 +381,15 @@ import_xlsx(session, "input.xlsx")
 | 감사 로그 | `ChangeLog` + `register_audit_target(table, columns)` |
 | 시트 매핑 영속화 | `SheetConfigEntry` + `register_domain(type, cls, field_map)` |
 | 스타일/border 조작 helper | `apply_style`, `build_column_map`, `write_cell` |
+
+---
+
+## 14. 실행 가능한 예제
+
+[`examples/pinmap_demo/`](../examples/pinmap_demo/) — 호스트 패키지(`pinmap.py`) + 합성 xlsx 생성(`make_sample.py`) + end-to-end 시연(`main.py`)이 한 디렉토리에 들어있다. 
+
+```bash
+uv run python examples/pinmap_demo/main.py
+```
+
+실행하면 import → 도메인 row 조회 → 머지 fill 확인 → 두 컬럼 mutate → `change_log` 출력 → round-trip export → 결과 xlsx 재로드까지 한 번에 보여준다.
