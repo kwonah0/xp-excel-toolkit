@@ -4,6 +4,5 @@ __pycache__/
 *.egg-info/
 dist/
 .venv/
-samples/
 __dsm__/
 diff_*.csv
