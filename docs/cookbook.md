@@ -384,12 +384,63 @@ import_xlsx(session, "input.xlsx")
 
 ---
 
-## 14. 실행 가능한 예제
+## 14. Recipe: facade 패턴으로 dependency 숨기기
 
-[`examples/pinmap_demo/`](../examples/pinmap_demo/) — 호스트 패키지(`pinmap.py`) + 합성 xlsx 생성(`make_sample.py`) + end-to-end 시연(`main.py`)이 한 디렉토리에 들어있다. 
+호스트 패키지 사용자가 `excel_toolkit`이라는 이름을 한 번도 보지 않게 만들고 싶다면, **명시적 facade 모듈** 하나에 re-export를 모아두자. `__init__.py`는 비워두고, 사용자는 `from pinmap.api import ...` 로 import.
+
+```python
+# pinmap/api.py — 호스트의 public 표면
+from excel_toolkit import (
+    Base,                  # 그대로 alias — 같은 identity, 같은 MetaData
+    ChangeLog, ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook,
+    MergeResolver, init_db,
+)
+
+from pinmap.models   import PinEntry, PIN_FIELD_MAP
+from pinmap.importer import SHEET_CONFIGS, import_pinmap
+from pinmap.exporter import EXPORT_HANDLERS, export_pinmap
+
+__all__ = [
+    "Base", "init_db", "PinEntry",
+    "import_pinmap", "export_pinmap",
+    "ChangeLog", "ExcelWorkbook", "ExcelSheet", "ExcelCell",
+    # ...
+]
+```
+
+```python
+# downstream — excel_toolkit이라는 단어를 안 본다
+from pinmap.api import init_db, PinEntry, import_pinmap, export_pinmap
+```
+
+핵심:
+
+- **`pinmap.api.Base` 는 `excel_toolkit.Base` 와 같은 객체** (alias). 같은 `MetaData` 를 공유하므로 `init_db()` 한 번에 인프라 + 도메인 테이블이 같이 생성된다. SQLAlchemy 2.0의 `DeclarativeBase` 는 un-mapped intermediate subclass 를 허용하지 않으니 alias 가 정답.
+- `__init__.py` 를 비워두면 `import pinmap` 만으로 부수효과가 발생하지 않는다 (`register_audit_target` 호출은 `pinmap.api` import 시점까지 지연).
+- excel_toolkit 의존을 끊거나 다른 백엔드로 갈아 끼울 때, **변하는 파일은 `pinmap.api` / `models.py` / `importer.py` / `exporter.py` 네 개뿐**.
+
+---
+
+## 15. 실행 가능한 예제
+
+[`examples/pinmap_demo/`](../examples/pinmap_demo/) — 위 §14 의 facade 패턴을 그대로 구현한 작은 호스트 패키지:
+
+```
+examples/pinmap_demo/
+├── make_sample.py      # 합성 xlsx 생성
+├── main.py             # downstream-app 시뮬레이션 (pinmap.api 만 import)
+└── pinmap/
+    ├── __init__.py     # 비어 있음
+    ├── api.py          # ← facade
+    ├── models.py       # PinEntry + register_audit_target
+    ├── importer.py     # import_pinmap (SheetConfig)
+    └── exporter.py     # export_pinmap (ExportHandler)
+```
+
+실행:
 
 ```bash
 uv run python examples/pinmap_demo/main.py
 ```
 
-실행하면 import → 도메인 row 조회 → 머지 fill 확인 → 두 컬럼 mutate → `change_log` 출력 → round-trip export → 결과 xlsx 재로드까지 한 번에 보여준다.
+import → 도메인 row 조회 → 머지 fill 확인 → 두 컬럼 mutate → `change_log` 출력 → round-trip export → 결과 xlsx 재로드까지 한 번에 보여준다.
