@@ -1,9 +1,14 @@
 """End-to-end demo: build sample xlsx → init_db → import via pinmap helpers
 → inspect/modify domain rows → round-trip export → verify.
 
-Run from anywhere:
+Run from anywhere::
 
     uv run python examples/pinmap_demo/main.py
+
+Note: this file imports **only from pinmap.api** — never from
+excel_toolkit directly. That's the facade pattern in action: downstream
+applications shouldn't have to know which library actually carries the
+infra.
 """
 
 from __future__ import annotations
@@ -13,10 +18,15 @@ from pathlib import Path
 
 import openpyxl
 
-from excel_toolkit import ChangeLog, ExcelCell, init_db
-
 from make_sample import make_sample
-from pinmap import PinEntry, export_pinmap, import_pinmap
+from pinmap.api import (
+    ChangeLog,
+    ExcelCell,
+    PinEntry,
+    export_pinmap,
+    import_pinmap,
+    init_db,
+)
 
 
 def main() -> None:
@@ -26,16 +36,16 @@ def main() -> None:
         modified = workdir / "modified.xlsx"
         db_url = f"sqlite:///{workdir / 'demo.db'}"
 
-        # ── 1. Spin up the DB. excel_toolkit owns init_db; we just call it.
-        #       infra tables (excel_workbook/sheet/cell/merge, change_log,
-        #       sheet_config) AND our PinEntry table are created in one
-        #       Base.metadata.create_all() pass because PinEntry inherits
-        #       excel_toolkit.Base.
+        # ── 1. Spin up the DB through the host facade.
+        #       Behind the scenes pinmap.api.init_db is excel_toolkit's
+        #       init_db; pinmap.api.Base shares its MetaData with
+        #       excel_toolkit.Base, so the infra tables AND pin_entry
+        #       are created in one create_all() pass.
         Session = init_db(db_url)
 
         with Session() as session:
-            # ── 2. Import via the thin host wrapper (which already knows
-            #       the SheetConfig for the "Pinmap_*" pattern).
+            # ── 2. Import via the thin host wrapper (which already
+            #       knows the SheetConfig for the "Pinmap_*" pattern).
             import_pinmap(session, sample)
             session.commit()
 
@@ -49,7 +59,8 @@ def main() -> None:
             scl = session.query(PinEntry).filter_by(pin_no="A4").one()
             assert scl.direction == "I/O", "merge fill failed"
 
-            # Cell-level access (style/comment/merge) is still available.
+            # Cell-level access (style/comment/merge) — also re-exported
+            # through pinmap.api so the host owns the namespace.
             vdd_cell = (
                 session.query(ExcelCell)
                 .filter_by(row=3, col=2)
@@ -59,11 +70,11 @@ def main() -> None:
             print(f"  comment: {vdd_cell.comment!r}")
             print(f"  style:   {vdd_cell.style}")
 
-            # ── 4. Modify a couple of domain rows. The SQLite trigger
+            # ── 4. Mutate a couple of domain rows. The SQLite trigger
             #       registered for pin_entry will record the changes in
             #       change_log. We pick A1/VDD's direction (outside the
-            #       vertical-merge range) to keep the example clean — see
-            #       the note in the README about merge ranges + export.
+            #       vertical-merge range) to keep the example clean —
+            #       see the note in the README about merge ranges.
             vdd = session.query(PinEntry).filter_by(pin_no="A1").one()
             vdd.direction = "CORE"
             sda = session.query(PinEntry).filter_by(pin_no="A3").one()
@@ -75,9 +86,7 @@ def main() -> None:
                 print(f"  {log.operation}  pin_entry.{log.column_name}: "
                       f"{log.old_value!r} → {log.new_value!r}")
 
-            # ── 5. Round-trip export. Original BLOB is reused — the
-            #       header fill, merges, comment, and the Notes sheet
-            #       all survive untouched.
+            # ── 5. Round-trip export through the host facade.
             export_pinmap(session, modified)
 
         # ── 6. Re-open the exported file and confirm the changes.
