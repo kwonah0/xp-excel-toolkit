@@ -1,4 +1,4 @@
-"""XLS → XLSX conversion using LibreOffice."""
+"""XLS → XLSX conversion using LibreOffice + import cache resolution."""
 
 from __future__ import annotations
 
@@ -56,24 +56,31 @@ def _find_libreoffice() -> str:
             return candidate
 
     raise FileNotFoundError(
-        "LibreOffice not found. Install it or set dsm.convert.LIBREOFFICE_PATH."
+        "LibreOffice not found. Install it or set xp_excel_toolkit.convert.LIBREOFFICE_PATH."
     )
 
 
 # ── XLS → XLSX conversion ───────────────────────────────────────────
 
-_CACHE_DIR_ENV = "DSM_CACHE_DIR"
+# Env vars consulted for cache override (DSM kept for backward compat with
+# the dsm CLI's --cache-dir flag).
+_CACHE_DIR_ENVS = ("XLTK_CACHE_DIR", "DSM_CACHE_DIR")
 
 
 def _get_cache_dir() -> Path:
     """Return the cache directory, creating it if needed.
 
     Resolution order:
-        1. $DSM_CACHE_DIR (set by --cache-dir flag or shell)
-        2. cwd / __dsm__/   (fallback)
+        1. $XLTK_CACHE_DIR / $DSM_CACHE_DIR (set by --cache-dir or shell)
+        2. cwd / __dsm__/   (fallback, kept for backward compat)
     """
-    override = os.environ.get(_CACHE_DIR_ENV)
-    d = Path(override) if override else Path.cwd() / _CACHE_DIR_NAME
+    for env in _CACHE_DIR_ENVS:
+        override = os.environ.get(env)
+        if override:
+            d = Path(override)
+            d.mkdir(parents=True, exist_ok=True)
+            return d
+    d = Path.cwd() / _CACHE_DIR_NAME
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -88,7 +95,7 @@ def convert_xls_to_xlsx(
     Args:
         xls_path: Path to the .xls file.
         output_dir: Directory for the output .xlsx file.
-                    If None, uses __dsm__/ in cwd.
+                    If None, uses cache dir.
         timeout: Timeout in seconds for the conversion process.
 
     Returns:
@@ -173,7 +180,7 @@ def validate_xlsx_format(path: Path) -> None:
     if header[:8] == _OLE2_MAGIC:
         raise ValueError(
             f"{path.name} is a binary .xls file renamed to .xlsx.\n"
-            f"  Use the original .xls extension — DSM will auto-convert via LibreOffice.\n"
+            f"  Use the original .xls extension — toolkit will auto-convert via LibreOffice.\n"
             f"  Or convert manually: libreoffice --headless --convert-to xlsx '{path}'"
         )
 
@@ -190,14 +197,26 @@ def resolve_db(
     path: Path,
     on_progress=None,
     with_formulas: bool = False,
+    *,
+    import_fn=None,
 ) -> tuple[Path, bool]:
     """Resolve any file path to a DB path, auto-importing if needed.
 
     - .db → return as-is
-    - .xlsx/.xls → ensure xlsx, import to __dsm__/<stem>_<hash>.db
+    - .xlsx/.xls → ensure xlsx, import to <cache>/<stem>_<hash>.db
+
+    Args:
+        path: Source file (.db / .xlsx / .xls).
+        on_progress: Optional progress callback.
+        with_formulas: Whether to load formula strings during import.
+        import_fn: Optional callable ``(session, xlsx_path, *, on_progress,
+            with_formulas) -> None``. Defaults to a cells-only import via
+            :func:`xp_excel_toolkit.xlsx_parser.import_xlsx`. Domain packages can pass
+            their own pipeline (parse + build) here so that the cached DB
+            includes their domain rows.
 
     Returns:
-        (db_path, is_cached) — is_cached=True if DB is in __dsm__/
+        (db_path, is_cached) — is_cached=True if DB is in cache dir.
     """
     if path.suffix == ".db":
         return path, False
@@ -224,13 +243,18 @@ def resolve_db(
         else:
             print(msg)
 
-        from dsm.models import init_db
-        from dsm.xlsx_parser import import_xlsx
+        from xp_excel_toolkit.models import init_db
+        from xp_excel_toolkit.xlsx_parser import import_xlsx
 
         Session = init_db(f"sqlite:///{cached_db}")
         with Session() as session:
-            import_xlsx(session, xlsx_path, on_progress=on_progress,
-                        with_formulas=with_formulas)
+            if import_fn is None:
+                import_xlsx(session, xlsx_path, on_progress=on_progress,
+                            with_formulas=with_formulas)
+            else:
+                import_fn(session, xlsx_path,
+                          on_progress=on_progress,
+                          with_formulas=with_formulas)
             session.commit()
         return cached_db, True
 
@@ -241,7 +265,7 @@ def ensure_xlsx_cached(
     path: Path,
     on_progress=None,
 ) -> Path:
-    """If path is .xls, convert to .xlsx and cache in __dsm__/.
+    """If path is .xls, convert to .xlsx and cache in the cache dir.
 
     If path is already .xlsx, validates it is a real OOXML file (not a
     renamed binary .xls).

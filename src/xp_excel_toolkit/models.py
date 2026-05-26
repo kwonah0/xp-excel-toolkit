@@ -1,4 +1,10 @@
-"""SQLAlchemy ORM models for Excel metadata and domain data."""
+"""SQLAlchemy ORM models for Excel metadata + generic mechanisms.
+
+This module owns the schema for Excel structure (workbook/sheet/cell/merge),
+sheet-config registry, and an audit-trigger mechanism. Domain packages
+attach their own models to the shared :class:`Base` and register audit
+targets via :func:`register_audit_target`.
+"""
 
 from __future__ import annotations
 
@@ -80,8 +86,6 @@ class ExcelCell(Base):
         Index("ix_cell_sheet_row_col", "sheet_id", "row", "col", unique=True),
     )
 
-
-# ── DB setup helper ─────────────────────────────────────────────────
 
 # ── Sheet config (stored in DB) ─────────────────────────────────────
 
