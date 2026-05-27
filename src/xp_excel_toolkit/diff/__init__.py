@@ -8,9 +8,9 @@ Domain-agnostic. Provides:
 - load_cells_by_sheet, load_merge_ranges: helpers exposed for domain
   packages that want to reuse the loading layer.
 
-Domain packages (e.g. dsm) define their own DiffRegister/DiffMemmap on the
-same DiffBase. As long as those classes are imported before init_diff_db,
-their tables are created in the same call.
+Domain packages define their own diff result tables (e.g. DiffRegister)
+on the same DiffBase. As long as those classes are imported before
+init_diff_db, their tables are created in the same call.
 """
 
 from xp_excel_toolkit.diff.models import (

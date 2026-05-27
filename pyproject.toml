@@ -1,6 +1,6 @@
 [project]
 name = "xp-excel-toolkit"
-version = "0.3.0"
+version = "0.4.0"
 description = "Excel ↔ SQLite toolkit — workbook/sheet/cell ORM, parsers, merge resolver"
 requires-python = ">=3.12"
 dependencies = [

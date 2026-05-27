@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
 
-# ── Configuration ────────────────────────────────────────────────────
-# LibreOffice executable path. Set this if auto-detection fails.
-LIBREOFFICE_PATH: str | None = None
+from xp_excel_toolkit import config
 
-_CACHE_DIR_NAME = "__dsm__"
+_FALLBACK_CACHE_DIR = ".xltk_cache"
 
 _SEARCH_PATHS = [
     "/usr/bin/libreoffice",
@@ -34,16 +31,16 @@ def _find_libreoffice() -> str:
     """Find LibreOffice executable.
 
     Priority:
-        1. LIBREOFFICE_PATH module variable (set above)
+        1. config.LIBREOFFICE_PATH
         2. 'libreoffice' / 'soffice' on PATH
         3. Common installation paths
     """
-    if LIBREOFFICE_PATH:
-        p = Path(LIBREOFFICE_PATH)
+    if config.LIBREOFFICE_PATH:
+        p = Path(config.LIBREOFFICE_PATH)
         if p.exists():
             return str(p)
         raise FileNotFoundError(
-            f"LibreOffice not found at configured path: {LIBREOFFICE_PATH}"
+            f"LibreOffice not found at configured path: {config.LIBREOFFICE_PATH}"
         )
 
     for name in ("libreoffice", "soffice"):
@@ -56,31 +53,24 @@ def _find_libreoffice() -> str:
             return candidate
 
     raise FileNotFoundError(
-        "LibreOffice not found. Install it or set xp_excel_toolkit.convert.LIBREOFFICE_PATH."
+        "LibreOffice not found. Install it or set xp_excel_toolkit.config.LIBREOFFICE_PATH."
     )
 
 
 # ── XLS → XLSX conversion ───────────────────────────────────────────
 
-# Env vars consulted for cache override (DSM kept for backward compat with
-# the dsm CLI's --cache-dir flag).
-_CACHE_DIR_ENVS = ("XLTK_CACHE_DIR", "DSM_CACHE_DIR")
-
-
 def _get_cache_dir() -> Path:
     """Return the cache directory, creating it if needed.
 
     Resolution order:
-        1. $XLTK_CACHE_DIR / $DSM_CACHE_DIR (set by --cache-dir or shell)
-        2. cwd / __dsm__/   (fallback, kept for backward compat)
+        1. config.CACHE_DIR (set by downstream callers)
+        2. <cwd>/.xltk_cache/  (fallback)
     """
-    for env in _CACHE_DIR_ENVS:
-        override = os.environ.get(env)
-        if override:
-            d = Path(override)
-            d.mkdir(parents=True, exist_ok=True)
-            return d
-    d = Path.cwd() / _CACHE_DIR_NAME
+    d = (
+        Path(config.CACHE_DIR)
+        if config.CACHE_DIR is not None
+        else Path.cwd() / _FALLBACK_CACHE_DIR
+    )
     d.mkdir(parents=True, exist_ok=True)
     return d
 

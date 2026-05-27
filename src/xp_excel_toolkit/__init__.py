@@ -6,6 +6,10 @@ and provides helpers for domain packages that build their own models
 on top of the cell data.
 """
 
+# Import config first so that convert (and any other submodule below)
+# can safely `from xp_excel_toolkit import config` without hitting a
+# partially-initialised package.
+from xp_excel_toolkit import config
 from xp_excel_toolkit.convert import (
     convert_xls_to_xlsx,
     ensure_xlsx_cached,
@@ -60,6 +64,7 @@ __all__ = [
     "MergeResolver",
     "SheetConfigEntry",
     "apply_style",
+    "config",
     "convert_xls_to_xlsx",
     "ensure_xlsx_cached",
     "export_from_cells",
