@@ -293,7 +293,174 @@ cell.formula_ref    # "B1:B10"
 
 ---
 
-## 10. Recipe: SQL로 임의 조회/수정 + change_log
+## 10. Recipe: 도메인 row에서 다른 셀 reference
+
+도메인 모델은 자기 출처(`sheet_id` + `excel_row`)를 안다. 거기서 sibling cell이나 임의 셀 address로 reference 잡는 helper는 라이브러리에 내장돼 있지 않고 — 호스트가 짧은 method를 모델/모듈에 붙여 쓰는 패턴이 의도된 사용법.
+
+### 10.1 같은 row의 다른 column
+
+```python
+from sqlalchemy.orm import object_session
+from excel_toolkit import ExcelCell
+
+class PinEntry(Base):
+    ...
+    def cell(self, col: int) -> ExcelCell | None:
+        session = object_session(self)
+        return (
+            session.query(ExcelCell)
+            .filter_by(sheet_id=self.sheet_id, row=self.excel_row, col=col)
+            .one_or_none()
+        )
+
+pin = session.query(PinEntry).filter_by(pin_no="A1").one()
+note = pin.cell(col=5)
+print(note.raw_value, note.comment, note.style)
+```
+
+### 10.2 Excel address ("D5") 로 가리키기
+
+```python
+from openpyxl.utils import coordinate_from_string, column_index_from_string
+
+def cell_at(entry, address: str) -> ExcelCell | None:
+    col_letter, row = coordinate_from_string(address)
+    col = column_index_from_string(col_letter)
+    session = object_session(entry)
+    return (
+        session.query(ExcelCell)
+        .filter_by(sheet_id=entry.sheet_id, row=row, col=col)
+        .one_or_none()
+    )
+```
+
+시트 간 reference (`Sheet2!D5`):
+
+```python
+from excel_toolkit import ExcelSheet
+
+def cell_at_address(session, sheet_id: int, address: str) -> ExcelCell | None:
+    if "!" in address:
+        sheet_name, coord = address.split("!", 1)
+        sheet_id = session.query(ExcelSheet).filter_by(name=sheet_name).one().id
+    else:
+        coord = address
+    col_letter, row = coordinate_from_string(coord)
+    col = column_index_from_string(col_letter)
+    return (
+        session.query(ExcelCell)
+        .filter_by(sheet_id=sheet_id, row=row, col=col)
+        .one_or_none()
+    )
+```
+
+### 10.3 머지 origin까지 자동 추적
+
+```python
+from excel_toolkit import MergeResolver
+
+def cell_value_resolved(entry, col: int) -> str | None:
+    session = object_session(entry)
+    merger = MergeResolver.from_db(session, entry.sheet_id)
+    if merger.is_merged(entry.excel_row, col):
+        return merger.get_value(entry.excel_row, col)
+    cell = (
+        session.query(ExcelCell)
+        .filter_by(sheet_id=entry.sheet_id, row=entry.excel_row, col=col)
+        .one_or_none()
+    )
+    return cell.raw_value if cell else None
+```
+
+> `MergeResolver` 생성에 약간 비용이 있어서 시트당 한 번 만들어 재사용 권장.
+
+### 10.4 SQLAlchemy relationship으로 명시적 sibling
+
+자주 쓰는 sibling cell이면 query 시 join / eager-load 가능하게:
+
+```python
+from sqlalchemy.orm import relationship
+
+class PinEntry(Base):
+    __tablename__ = "pin_entry"
+    ...
+    sheet_id: Mapped[int | None] = mapped_column(ForeignKey("excel_sheet.id"))
+    excel_row: Mapped[int | None]
+
+    # column 5의 셀을 lazy relationship으로
+    note_cell: Mapped[ExcelCell | None] = relationship(
+        primaryjoin=(
+            "and_(PinEntry.sheet_id == ExcelCell.sheet_id, "
+            "     PinEntry.excel_row == ExcelCell.row, "
+            "     ExcelCell.col == 5)"
+        ),
+        viewonly=True,
+        uselist=False,
+    )
+```
+
+장점: `selectinload(PinEntry.note_cell)` 같은 eager 최적화 가능. 단점: col index가 모델에 박힘 — 헤더 위치가 바뀌면 깨짐.
+
+### 10.5 헤더 텍스트로 col 동적 찾기
+
+```python
+from excel_toolkit import ExcelSheet, ExcelCell
+
+def column_index_for_header(session, sheet_id: int, header_text: str) -> int | None:
+    sheet = session.get(ExcelSheet, sheet_id)
+    if not sheet or not sheet.header_row:
+        return None
+    cell = (
+        session.query(ExcelCell)
+        .filter_by(sheet_id=sheet_id, row=sheet.header_row)
+        .filter(ExcelCell.raw_value == header_text)
+        .first()
+    )
+    return cell.col if cell else None
+```
+
+`build_column_map(ws, header_row, field_map)`는 worksheet 객체가 손에 있을 때 같은 일을 한 번에 dict로 만들어 준다.
+
+### 10.6 cell address를 도메인 필드로 저장
+
+entry가 다른 셀을 가리키는 게 1급 개념이면 address를 string으로 저장하고 dereference helper로:
+
+```python
+class Calculation(Base):
+    __tablename__ = "calculation"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_ref: Mapped[str | None] = mapped_column(Text)   # "D5" or "Sheet2!D5"
+    sheet_id: Mapped[int | None] = mapped_column(ForeignKey("excel_sheet.id"))
+    excel_row: Mapped[int | None]
+
+    @property
+    def source_value(self) -> str | None:
+        session = object_session(self)
+        target = cell_at_address(session, self.sheet_id, self.source_ref)
+        return target.raw_value if target else None
+```
+
+### 10.7 한계
+
+- Excel 수식 (`=B2+C2`) 은 자동 dereference 안 됨. 문자열 그대로 저장 — 호스트가 직접 parse하거나 `with_formulas=True` 의 `cached_value` 활용.
+- R1C1 / structured reference (`Table1[Column]`) 변환 helper 없음.
+- 시트 간 address 분해 (`Sheet2!D5` split) 는 호스트가 직접.
+
+### 10.8 정리
+
+| 의도 | 추천 |
+|---|---|
+| 같은 row 다른 col | 도메인 `cell(col)` 메서드 |
+| Excel address ("D5") | `cell_at(addr)` + `openpyxl.utils` |
+| sheet-prefixed ("Sheet2!D5") | `cell_at_address(session, sheet_id, addr)` |
+| 머지 origin 자동 추적 | `MergeResolver` |
+| 자주 쓰는 sibling (관계로) | `relationship(primaryjoin=...)` |
+| 헤더로 col 찾기 | `column_index_for_header` / `build_column_map` |
+| address 자체를 도메인 필드로 | `source_ref` 컬럼 + dereference 함수 |
+
+---
+
+## 11. Recipe: SQL로 임의 조회/수정 + change_log
 
 `register_audit_target()`을 걸어두면 **UPDATE / DELETE는 모두 `change_log`로 자동 적재**(SQLite 트리거).
 
@@ -324,7 +491,7 @@ session.execute(
 
 ---
 
-## 11. Recipe: 시트 패턴을 DB에 영속화 (`SheetConfigEntry`)
+## 12. Recipe: 시트 패턴을 DB에 영속화 (`SheetConfigEntry`)
 
 런타임에 sheet_configs를 매번 지정하기 싫을 때, DB에 박아두면 `import_xlsx(session, path)` 만 호출해도 자동 적용. 단 **사용자 코드에서 도메인 클래스를 registry에 등록해 둬야** `domain_type` 문자열을 클래스로 풀 수 있다.
 
@@ -355,7 +522,7 @@ import_xlsx(session, "input.xlsx")
 
 ---
 
-## 12. 알아둘 점 / 한계
+## 13. 알아둘 점 / 한계
 
 - 셀 좌표는 모두 **1-based** (openpyxl 규칙). `.xls` 임포트도 내부 변환해서 1-based로 통일.
 - `ExcelCell.raw_value`는 **항상 str**. 숫자/날짜도 str로 박힘 — 타입이 중요하면 도메인 필드에서 변환 책임.
@@ -366,7 +533,7 @@ import_xlsx(session, "input.xlsx")
 
 ---
 
-## 13. API 한 페이지 요약
+## 14. API 한 페이지 요약
 
 | 하고 싶은 것 | 부르는 함수 |
 |---|---|
@@ -384,7 +551,7 @@ import_xlsx(session, "input.xlsx")
 
 ---
 
-## 14. Recipe: facade 패턴으로 dependency 숨기기
+## 15. Recipe: facade 패턴으로 dependency 숨기기
 
 호스트 패키지 사용자가 `excel_toolkit`이라는 이름을 한 번도 보지 않게 만들고 싶다면, **명시적 facade 모듈** 하나에 re-export를 모아두자. `__init__.py`는 비워두고, 사용자는 `from pinmap.api import ...` 로 import.
 
@@ -421,9 +588,9 @@ from pinmap.api import init_db, PinEntry, import_pinmap, export_pinmap
 
 ---
 
-## 15. 실행 가능한 예제
+## 16. 실행 가능한 예제
 
-[`examples/pinmap_demo/`](../examples/pinmap_demo/) — 위 §14 의 facade 패턴을 그대로 구현한 작은 호스트 패키지:
+[`examples/pinmap_demo/`](../examples/pinmap_demo/) — 위 §15 의 facade 패턴을 그대로 구현한 작은 호스트 패키지:
 
 ```
 examples/pinmap_demo/
