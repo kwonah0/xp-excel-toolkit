@@ -122,8 +122,15 @@ def register_audit_target(table_name: str, columns: list[str]) -> None:
     AUDIT_TARGETS[table_name] = columns
 
 
-def _create_audit_triggers(engine) -> None:
-    """Create SQLite triggers for all registered audit targets."""
+def create_audit_triggers(engine) -> None:
+    """Create SQLite triggers for all registered audit targets.
+
+    Public entry point so host packages that manage their own engine/session
+    (instead of calling :func:`init_db`) can still install the audit triggers
+    after ``Base.metadata.create_all(engine)``. Idempotent (CREATE TRIGGER IF
+    NOT EXISTS). Reads the :data:`AUDIT_TARGETS` registry — call
+    :func:`register_audit_target` first.
+    """
     from sqlalchemy import text
 
     with engine.connect() as conn:
@@ -167,10 +174,14 @@ def _create_audit_triggers(engine) -> None:
         conn.commit()
 
 
+# Backwards-compatible private alias (was the original internal name).
+_create_audit_triggers = create_audit_triggers
+
+
 # ── DB setup helper ─────────────────────────────────────────────────
 
 def init_db(db_url: str = "sqlite:///excel_data.db"):
     engine = create_engine(db_url, echo=False)
     Base.metadata.create_all(engine)
-    _create_audit_triggers(engine)
+    create_audit_triggers(engine)
     return sessionmaker(bind=engine)

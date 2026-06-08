@@ -33,6 +33,7 @@ from excel_toolkit.models import (
     ExcelSheet,
     ExcelWorkbook,
     SheetConfigEntry,
+    create_audit_triggers,
     init_db,
     register_audit_target,
 )
@@ -55,6 +56,7 @@ __all__ = [
     "ExcelSheet",
     "ExcelWorkbook",
     "SheetConfigEntry",
+    "create_audit_triggers",
     "init_db",
     "register_audit_target",
     # Parsing
