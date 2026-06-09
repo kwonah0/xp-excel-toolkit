@@ -20,9 +20,9 @@ diff · export 를 자유롭게 쌓는 toolkit. 도메인 무관 (regmap 도 그
 | `excel_cell` | 각 셀의 `raw_value`/`cached_value` (formula 결과)/`style` (JSON)/`comment`/`formula_type`/`merge_id` |
 | `excel_merge` | merge range (R, C 범위) |
 
-`excel_cell.style` 은 dict — `bg_color`, `font_bold`, `font_color`,
-`number_format`, `border_left/right/top/bottom` 까지 보존. round-trip
-export 시 그대로 재현.
+`excel_cell.style` 은 dict — `bg_color`, `font_bold`, `font_strike`,
+`font_color`, `number_format`, `border_left/right/top/bottom` 까지 보존.
+round-trip export 시 그대로 재현.
 
 **도메인 분리** — toolkit 은 "cell" 까지만 안다. Register / Bom / Netlist
 같은 도메인 모델은 사용자가 자기 패키지에 정의. toolkit 은 그걸 만드

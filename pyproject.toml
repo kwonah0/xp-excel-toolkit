@@ -1,6 +1,6 @@
 [project]
 name = "xp-excel-toolkit"
-version = "0.4.0"
+version = "0.5.0"
 description = "Excel ↔ SQLite toolkit — workbook/sheet/cell ORM, parsers, merge resolver"
 requires-python = ">=3.12"
 dependencies = [
@@ -19,3 +19,9 @@ packages = ["src/xp_excel_toolkit"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
+
+[[tool.uv.index]]
+name = "dt-dev"
+url = "http://localhost:9780/root/dev/+simple/"
+publish-url = "http://localhost:9780/root/dev/"
+explicit = true

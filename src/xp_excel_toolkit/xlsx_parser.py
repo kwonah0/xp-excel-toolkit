@@ -53,6 +53,8 @@ def extract_style(cell: Cell) -> dict | None:
     if font:
         if font.bold:
             style["font_bold"] = True
+        if font.strike:
+            style["font_strike"] = True
         if font.color and font.color.rgb and font.color.rgb != "00000000":
             rgb = font.color.rgb
             if isinstance(rgb, str) and len(rgb) == 8:

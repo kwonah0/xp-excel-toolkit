@@ -27,6 +27,8 @@ def apply_style(cell: Cell, style: dict | None) -> None:
     font_kwargs = {}
     if style.get("font_bold"):
         font_kwargs["bold"] = True
+    if style.get("font_strike"):
+        font_kwargs["strike"] = True
     fc = style.get("font_color")
     if fc:
         font_kwargs["color"] = fc.lstrip("#")

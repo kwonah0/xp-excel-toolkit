@@ -37,6 +37,8 @@ def _extract_style_xls(book: xlrd.Book, xf_index: int) -> dict | None:
         font = book.font_list[xf.font_index]
         if font.bold:
             style["font_bold"] = True
+        if font.struck_out:
+            style["font_strike"] = True
         colour_idx = font.colour_index
         if colour_idx and colour_idx != 32767:  # 32767 = automatic
             colour = book.colour_map.get(colour_idx)
