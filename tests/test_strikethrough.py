@@ -7,9 +7,9 @@ import xlrd
 import xlwt
 from openpyxl.styles import Font
 
-from xp_excel_toolkit.exporter import apply_style
-from xp_excel_toolkit.xls_parser import _extract_style_xls
-from xp_excel_toolkit.xlsx_parser import extract_style
+from xp_excel_toolkit.export.writer import apply_style
+from xp_excel_toolkit.ingest.xls import _extract_style_xls
+from xp_excel_toolkit.ingest.xlsx import extract_style
 
 
 def test_extract_style_reads_strikethrough_from_xlsx():

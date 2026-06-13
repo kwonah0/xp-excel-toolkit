@@ -1,10 +1,12 @@
-"""XLS → XLSX conversion using LibreOffice + import cache resolution."""
+"""XLS → XLSX conversion using LibreOffice + format validation + cache."""
 
 from __future__ import annotations
 
 import hashlib
 import shutil
 import subprocess
+import warnings
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -57,9 +59,9 @@ def _find_libreoffice() -> str:
     )
 
 
-# ── XLS → XLSX conversion ───────────────────────────────────────────
+# ── Cache helpers ────────────────────────────────────────────────────
 
-def _get_cache_dir() -> Path:
+def get_cache_dir() -> Path:
     """Return the cache directory, creating it if needed.
 
     Resolution order:
@@ -74,6 +76,18 @@ def _get_cache_dir() -> Path:
     d.mkdir(parents=True, exist_ok=True)
     return d
 
+
+def cache_key(path: Path) -> tuple[str, str]:
+    """Generate cache key (hash, mtime_str) from file path and mtime."""
+    abs_path = path.resolve()
+    mtime = abs_path.stat().st_mtime
+    raw = f"{abs_path}_{mtime}"
+    h = hashlib.sha256(raw.encode()).hexdigest()[:12]
+    mtime_str = datetime.fromtimestamp(mtime).strftime("%Y%m%d_%H%M%S")
+    return h, mtime_str
+
+
+# ── XLS → XLSX conversion ───────────────────────────────────────────
 
 def convert_xls_to_xlsx(
     xls_path: str | Path,
@@ -98,7 +112,7 @@ def convert_xls_to_xlsx(
     lo = _find_libreoffice()
 
     if output_dir is None:
-        output_dir = _get_cache_dir()
+        output_dir = get_cache_dir()
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -137,24 +151,17 @@ def convert_xls_to_xlsx(
         )
 
     if result.returncode != 0 and result.stderr:
-        import sys
-        print(f"Warning: LibreOffice exited with code {result.returncode}, "
-              f"but output file was created.", file=sys.stderr)
+        warnings.warn(
+            f"LibreOffice exited with code {result.returncode}, "
+            f"but output file was created.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     return converted
 
 
-# ── Cache helpers ────────────────────────────────────────────────────
-
-def cache_key(path: Path) -> tuple[str, str]:
-    """Generate cache key (hash, mtime_str) from file path and mtime."""
-    abs_path = path.resolve()
-    mtime = abs_path.stat().st_mtime
-    raw = f"{abs_path}_{mtime}"
-    h = hashlib.sha256(raw.encode()).hexdigest()[:12]
-    mtime_str = datetime.fromtimestamp(mtime).strftime("%Y%m%d_%H%M%S")
-    return h, mtime_str
-
+# ── Format validation ────────────────────────────────────────────────
 
 def validate_xlsx_format(path: Path) -> None:
     """Check that a .xlsx file is actually a valid ZIP (OOXML) file.
@@ -181,79 +188,9 @@ def validate_xlsx_format(path: Path) -> None:
         )
 
 
-# ── Public API ───────────────────────────────────────────────────────
-
-def resolve_db(
-    path: Path,
-    on_progress=None,
-    with_formulas: bool = False,
-    *,
-    import_fn=None,
-) -> tuple[Path, bool]:
-    """Resolve any file path to a DB path, auto-importing if needed.
-
-    - .db → return as-is
-    - .xlsx/.xls → ensure xlsx, import to <cache>/<stem>_<hash>.db
-
-    Args:
-        path: Source file (.db / .xlsx / .xls).
-        on_progress: Optional progress callback.
-        with_formulas: Whether to load formula strings during import.
-        import_fn: Optional callable ``(session, xlsx_path, *, on_progress,
-            with_formulas) -> None``. Defaults to a cells-only import via
-            :func:`xp_excel_toolkit.xlsx_parser.import_xlsx`. Domain packages can pass
-            their own pipeline (parse + build) here so that the cached DB
-            includes their domain rows.
-
-    Returns:
-        (db_path, is_cached) — is_cached=True if DB is in cache dir.
-    """
-    if path.suffix == ".db":
-        return path, False
-
-    if path.suffix.lower() in (".xlsx", ".xls"):
-        xlsx_path = ensure_xlsx_cached(path, on_progress=on_progress)
-
-        cache_dir = _get_cache_dir()
-
-        h, mtime_str = cache_key(path)
-        cached_db = cache_dir / f"{path.stem}_{h}_{mtime_str}.db"
-
-        if cached_db.exists():
-            msg = f"Using cached DB for {path.name} ({cached_db.name})"
-            if on_progress:
-                on_progress(msg)
-            else:
-                print(msg)
-            return cached_db, True
-
-        msg = f"Importing {xlsx_path.name} into cache..."
-        if on_progress:
-            on_progress(msg)
-        else:
-            print(msg)
-
-        from xp_excel_toolkit.models import init_db
-        from xp_excel_toolkit.xlsx_parser import import_xlsx
-
-        Session = init_db(f"sqlite:///{cached_db}")
-        with Session() as session:
-            if import_fn is None:
-                import_xlsx(session, xlsx_path, on_progress=on_progress,
-                            with_formulas=with_formulas)
-            else:
-                import_fn(session, xlsx_path,
-                          on_progress=on_progress,
-                          with_formulas=with_formulas)
-            session.commit()
-        return cached_db, True
-
-    raise ValueError(f"Unsupported file type: {path.suffix} (expected .db, .xlsx, or .xls)")
-
-
 def ensure_xlsx_cached(
     path: Path,
-    on_progress=None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> Path:
     """If path is .xls, convert to .xlsx and cache in the cache dir.
 
@@ -265,24 +202,18 @@ def ensure_xlsx_cached(
         validate_xlsx_format(path)
         return path
 
-    cache_dir = _get_cache_dir()
+    cache_dir = get_cache_dir()
 
     h, mtime_str = cache_key(path)
     cached_xlsx = cache_dir / f"{path.stem}_{h}_{mtime_str}.xlsx"
 
     if cached_xlsx.exists():
-        msg = f"Using cached XLSX for {path.name} ({cached_xlsx.name})"
         if on_progress:
-            on_progress(msg)
-        else:
-            print(msg)
+            on_progress(f"Using cached XLSX for {path.name} ({cached_xlsx.name})")
         return cached_xlsx
 
-    msg = f"Converting {path.name} → .xlsx (LibreOffice)..."
     if on_progress:
-        on_progress(msg)
-    else:
-        print(msg)
+        on_progress(f"Converting {path.name} → .xlsx (LibreOffice)...")
 
     xlsx_path = convert_xls_to_xlsx(path, output_dir=cache_dir)
 
@@ -290,10 +221,7 @@ def ensure_xlsx_cached(
     if xlsx_path != cached_xlsx:
         shutil.move(str(xlsx_path), str(cached_xlsx))
 
-    msg = f"Converted: {cached_xlsx.name}"
     if on_progress:
-        on_progress(msg)
-    else:
-        print(msg)
+        on_progress(f"Converted: {cached_xlsx.name}")
 
     return cached_xlsx

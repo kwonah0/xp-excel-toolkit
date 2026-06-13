@@ -1,75 +1,95 @@
-"""Merge cell resolver — works from openpyxl worksheet or DB records."""
+"""Merge cell resolver — works from openpyxl worksheet, DB records, or raw bounds."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, NamedTuple, Protocol
 
 from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
+
+from xp_excel_toolkit.models import ExcelCell, ExcelMerge
 
 if TYPE_CHECKING:
     from openpyxl.worksheet.worksheet import Worksheet
     from sqlalchemy.orm import Session
 
 
+class RangeLike(Protocol):
+    min_row: int
+    min_col: int
+    max_row: int
+    max_col: int
+
+
+class MergeBounds(NamedTuple):
+    min_row: int
+    min_col: int
+    max_row: int
+    max_col: int
+
+
+def _build_merge_map(ranges: Iterable[RangeLike]) -> dict[tuple[int, int], tuple[int, int]]:
+    merge_map: dict[tuple[int, int], tuple[int, int]] = {}
+    for mr in ranges:
+        origin = (mr.min_row, mr.min_col)
+        for r in range(mr.min_row, mr.max_row + 1):
+            for c in range(mr.min_col, mr.max_col + 1):
+                merge_map[(r, c)] = origin
+    return merge_map
+
+
 class MergeResolver:
     """Resolve merged cell values for a sheet.
 
-    Two construction paths:
-      - MergeResolver(ws)          — from openpyxl worksheet (import time)
-      - MergeResolver.from_db(...)  — from ExcelMerge + ExcelCell records (post-import)
+    Construction paths:
+      - MergeResolver.from_worksheet(ws)            — openpyxl worksheet (import time)
+      - MergeResolver.from_db(session, sheet_id)    — ExcelMerge + ExcelCell records
+      - MergeResolver.from_bounds(bounds, values)   — raw 1-based inclusive bounds
     """
 
-    def __init__(self, ws: Worksheet) -> None:
-        self._merge_map: dict[tuple[int, int], tuple[int, int]] = {}
-        self._origin_values: dict[tuple[int, int], str | None] = {}
-        self.ranges = list(ws.merged_cells.ranges)
+    def __init__(
+        self,
+        ranges: list[RangeLike],
+        merge_map: dict[tuple[int, int], tuple[int, int]],
+        origin_values: dict[tuple[int, int], str | None],
+    ) -> None:
+        self.ranges = ranges
+        self._merge_map = merge_map
+        self._origin_values = origin_values
 
-        for mr in self.ranges:
+    @classmethod
+    def from_worksheet(cls, ws: Worksheet) -> MergeResolver:
+        """Build from an openpyxl worksheet (import time)."""
+        ranges = list(ws.merged_cells.ranges)
+        merge_map = _build_merge_map(ranges)
+
+        origin_values: dict[tuple[int, int], str | None] = {}
+        for mr in ranges:
             origin = (mr.min_row, mr.min_col)
-            for r in range(mr.min_row, mr.max_row + 1):
-                for c in range(mr.min_col, mr.max_col + 1):
-                    self._merge_map[(r, c)] = origin
-
-            origin_cell = ws.cell(row=mr.min_row, column=mr.min_col)
-            val = origin_cell.value
+            val = ws.cell(row=mr.min_row, column=mr.min_col).value
             if val is None:
-                self._origin_values[origin] = None
+                origin_values[origin] = None
             elif isinstance(val, ArrayFormula):
-                self._origin_values[origin] = val.text if val.text else str(val.ref)
+                origin_values[origin] = val.text if val.text else str(val.ref)
             elif isinstance(val, DataTableFormula):
-                self._origin_values[origin] = None
+                origin_values[origin] = None
             else:
-                self._origin_values[origin] = str(val)
+                origin_values[origin] = str(val)
+
+        return cls(ranges, merge_map, origin_values)
 
     @classmethod
     def from_db(cls, session: Session, sheet_id: int) -> MergeResolver:
-        """Build a MergeResolver from DB records (no xlsx file needed)."""
-        from xp_excel_toolkit.models import ExcelCell, ExcelMerge
-
-        resolver = cls.__new__(cls)
-        resolver._merge_map = {}
-        resolver._origin_values = {}
-        resolver.ranges = []
-
-        merges = (
+        """Build from DB records (no xlsx file needed)."""
+        ranges = (
             session.query(ExcelMerge)
             .filter(ExcelMerge.sheet_id == sheet_id)
             .all()
         )
+        merge_map = _build_merge_map(ranges)
 
-        # Collect all origin coordinates to batch-query their values
-        origin_coords: list[tuple[int, int]] = []
-
-        for m in merges:
-            resolver.ranges.append(m)
-            origin = (m.min_row, m.min_col)
-            origin_coords.append(origin)
-            for r in range(m.min_row, m.max_row + 1):
-                for c in range(m.min_col, m.max_col + 1):
-                    resolver._merge_map[(r, c)] = origin
-
-        # Batch-query origin cell values
-        if origin_coords:
+        origin_values: dict[tuple[int, int], str | None] = {}
+        if ranges:
             origin_cells = (
                 session.query(ExcelCell.row, ExcelCell.col, ExcelCell.raw_value)
                 .filter(
@@ -79,10 +99,20 @@ class MergeResolver:
                 .all()
             )
             for row, col, raw_value in origin_cells:
-                if (row, col) in resolver._merge_map:
-                    resolver._origin_values[(row, col)] = raw_value
+                if (row, col) in merge_map:
+                    origin_values[(row, col)] = raw_value
 
-        return resolver
+        return cls(ranges, merge_map, origin_values)
+
+    @classmethod
+    def from_bounds(
+        cls,
+        bounds: Iterable[tuple[int, int, int, int]],
+        origin_values: dict[tuple[int, int], str | None],
+    ) -> MergeResolver:
+        """Build from raw 1-based inclusive (min_row, min_col, max_row, max_col) bounds."""
+        ranges = [MergeBounds(*b) for b in bounds]
+        return cls(ranges, _build_merge_map(ranges), dict(origin_values))
 
     def is_merged(self, row: int, col: int) -> bool:
         return (row, col) in self._merge_map

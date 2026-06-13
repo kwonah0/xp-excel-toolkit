@@ -15,9 +15,10 @@ import openpyxl
 from openpyxl.cell.cell import Cell
 from openpyxl.worksheet.formula import ArrayFormula, DataTableFormula
 from openpyxl.worksheet.worksheet import Worksheet
-from sqlalchemy import insert
+from sqlalchemy import bindparam, insert, update
 from sqlalchemy.orm import Session
 
+from xp_excel_toolkit.ingest.convert import validate_xlsx_format
 from xp_excel_toolkit.merge import MergeResolver
 from xp_excel_toolkit.models import ExcelCell, ExcelMerge, ExcelSheet, ExcelWorkbook
 
@@ -37,9 +38,9 @@ def extract_cell_value(value: Any) -> tuple[str | None, str | None, str | None]:
     return str(value), None, None
 
 
-def extract_style(cell: Cell) -> dict | None:
+def extract_style(cell: Cell) -> dict[str, Any] | None:
     """Extract visual style info from an openpyxl cell."""
-    style: dict = {}
+    style: dict[str, Any] = {}
 
     # Background color
     fill = cell.fill
@@ -130,7 +131,7 @@ def _import_ws(
 
     ``header_row`` is only stored if the caller passes it; xp_excel_toolkit itself
     does not try to guess. Domain builders detect the header via
-    :func:`xp_excel_toolkit.helpers.find_header_row_db` with their own header
+    :func:`xp_excel_toolkit.query.find_header_row_db` with their own header
     keyword list and update ``ExcelSheet.header_row`` themselves.
     """
     sheet_obj = ExcelSheet(workbook_id=wb_id, name=ws.title)
@@ -140,7 +141,7 @@ def _import_ws(
     sid = sheet_obj.id
 
     # -- Merge ranges (Core bulk insert) ------------------------------------
-    merger = MergeResolver(ws)
+    merger = MergeResolver.from_worksheet(ws)
 
     merge_dicts = [
         {
@@ -167,7 +168,7 @@ def _import_ws(
             merge_id_map[f"{mrow}:{mcol}"] = mid
 
     # -- Cells (Core bulk insert) -------------------------------------------
-    cell_dicts: list[dict] = []
+    cell_dicts: list[dict[str, Any]] = []
     for row in ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=ws.max_column):
         for cell in row:
             r, c = cell.row, cell.column
@@ -258,7 +259,6 @@ def import_xlsx(
     path = Path(path)
 
     if path.suffix.lower() == ".xlsx":
-        from xp_excel_toolkit.convert import validate_xlsx_format
         validate_xlsx_format(path)
 
     blob = path.read_bytes()
@@ -291,10 +291,19 @@ def import_xlsx(
         if on_progress:
             on_progress("Loading cached formula values (data_only=True)...")
         wb_val = openpyxl.load_workbook(path, data_only=True)
-        from sqlalchemy import update
+        overlay = (
+            update(ExcelCell)
+            .where(
+                ExcelCell.sheet_id == bindparam("b_sheet_id"),
+                ExcelCell.row == bindparam("b_row"),
+                ExcelCell.col == bindparam("b_col"),
+                ExcelCell.raw_value.like("=%"),
+            )
+            .values(cached_value=bindparam("b_val"))
+        )
         for sheet_obj in sheets:
             ws_val = wb_val[sheet_obj.name]
-            cached: dict[tuple[int, int], str] = {}
+            params: list[dict[str, Any]] = []
             for row in ws_val.iter_rows(
                 min_row=1,
                 max_row=ws_val.max_row,
@@ -302,19 +311,16 @@ def import_xlsx(
             ):
                 for cell in row:
                     if cell.value is not None:
-                        cached[(cell.row, cell.column)] = str(cell.value)
-            if cached:
-                for (r, c), val in cached.items():
-                    session.execute(
-                        update(ExcelCell)
-                        .where(
-                            ExcelCell.sheet_id == sheet_obj.id,
-                            ExcelCell.row == r,
-                            ExcelCell.col == c,
-                            ExcelCell.raw_value.like("=%"),
-                        )
-                        .values(cached_value=val)
-                    )
+                        params.append({
+                            "b_sheet_id": sheet_obj.id,
+                            "b_row": cell.row,
+                            "b_col": cell.column,
+                            "b_val": str(cell.value),
+                        })
+            if params:
+                conn = session.connection()
+                for i in range(0, len(params), BULK_CHUNK):
+                    conn.execute(overlay, params[i:i + BULK_CHUNK])
                 session.flush()
         wb_val.close()
         if on_progress:

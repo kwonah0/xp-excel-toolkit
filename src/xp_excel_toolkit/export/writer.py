@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import openpyxl
 from openpyxl.cell.cell import Cell
@@ -14,7 +15,7 @@ from sqlalchemy.orm import Session
 from xp_excel_toolkit.models import ExcelCell, ExcelMerge, ExcelSheet
 
 
-def apply_style(cell: Cell, style: dict | None) -> None:
+def apply_style(cell: Cell, style: dict[str, Any] | None) -> None:
     """Apply a style dict (from ExcelCell.style) to an openpyxl cell."""
     if not style:
         return
