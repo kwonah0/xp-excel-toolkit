@@ -25,6 +25,12 @@ from xp_excel_toolkit.export.merge_policy import (
     detect_merge_conflicts,
     resolve_conflicts,
 )
+from xp_excel_toolkit.export.domain import (
+    ExportHandler,
+    build_column_map,
+    export_domain_xlsx,
+    write_cell,
+)
 from xp_excel_toolkit.export.writer import (
     apply_style,
     export_from_cells,
@@ -53,6 +59,7 @@ from xp_excel_toolkit.models import (
     ExcelSheet,
     ExcelWorkbook,
     SheetConfigEntry,
+    create_audit_triggers,
     init_db,
     register_audit_target,
 )
@@ -71,13 +78,18 @@ __all__ = [
     "ExcelMerge",
     "ExcelSheet",
     "ExcelWorkbook",
+    "ExportHandler",
     "MergeResolver",
     "SheetConfigEntry",
     "apply_style",
+    "build_column_map",
     "config",
     "convert_xls_to_xlsx",
+    "create_audit_triggers",
     "ensure_xlsx_cached",
+    "export_domain_xlsx",
     "export_from_cells",
+    "write_cell",
     "extract_cell_value",
     "extract_style",
     "find_header_row",

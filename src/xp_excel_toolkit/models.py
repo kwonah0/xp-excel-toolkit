@@ -126,8 +126,12 @@ def register_audit_target(table_name: str, columns: list[str]) -> None:
     AUDIT_TARGETS[table_name] = columns
 
 
-def _create_audit_triggers(engine) -> None:
-    """Create SQLite triggers for all registered audit targets."""
+def create_audit_triggers(engine) -> None:
+    """Create SQLite triggers for all registered audit targets.
+
+    Public so callers that build their own engine (instead of going through
+    ``init_db``) can install the change-log triggers themselves.
+    """
     from sqlalchemy import text
 
     with engine.connect() as conn:
@@ -176,5 +180,5 @@ def _create_audit_triggers(engine) -> None:
 def init_db(db_url: str = "sqlite:///excel_data.db"):
     engine = create_engine(db_url, echo=False)
     Base.metadata.create_all(engine)
-    _create_audit_triggers(engine)
+    create_audit_triggers(engine)
     return sessionmaker(bind=engine)
