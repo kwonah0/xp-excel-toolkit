@@ -35,6 +35,12 @@ from xp_excel_toolkit.export.writer import (
     apply_style,
     export_from_cells,
 )
+from xp_excel_toolkit.export.structure import (
+    delete_cols,
+    delete_rows,
+    insert_cols,
+    insert_rows,
+)
 from xp_excel_toolkit.ingest.convert import (
     convert_xls_to_xlsx,
     ensure_xlsx_cached,
@@ -89,6 +95,10 @@ __all__ = [
     "ensure_xlsx_cached",
     "export_domain_xlsx",
     "export_from_cells",
+    "insert_rows",
+    "insert_cols",
+    "delete_rows",
+    "delete_cols",
     "write_cell",
     "extract_cell_value",
     "extract_style",
