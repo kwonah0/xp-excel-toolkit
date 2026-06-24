@@ -43,6 +43,7 @@ from xp_excel_toolkit.export.structure import (
 )
 from xp_excel_toolkit.ingest.convert import (
     convert_xls_to_xlsx,
+    convert_xlsx_to_xls,
     ensure_xlsx_cached,
     validate_xlsx_format,
 )
@@ -91,6 +92,7 @@ __all__ = [
     "build_column_map",
     "config",
     "convert_xls_to_xlsx",
+    "convert_xlsx_to_xls",
     "create_audit_triggers",
     "ensure_xlsx_cached",
     "export_domain_xlsx",
