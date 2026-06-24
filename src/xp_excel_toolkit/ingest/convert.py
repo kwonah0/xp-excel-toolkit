@@ -161,6 +161,68 @@ def convert_xls_to_xlsx(
     return converted
 
 
+def convert_xlsx_to_xls(
+    xlsx_path: str | Path,
+    output_dir: str | Path | None = None,
+    timeout: int = 600,
+) -> Path:
+    """Convert .xlsx file to legacy .xls using LibreOffice (round-trip of
+    :func:`convert_xls_to_xlsx`).
+
+    Args:
+        xlsx_path: Path to the .xlsx file.
+        output_dir: Directory for the output .xls file. If None, uses the
+            .xlsx file's own directory (so callers get an in-place sibling).
+        timeout: Timeout in seconds for the conversion process.
+
+    Returns:
+        Path to the converted .xls file.
+    """
+    xlsx_path = Path(xlsx_path).resolve()
+    if not xlsx_path.exists():
+        raise FileNotFoundError(f"Input file not found: {xlsx_path}")
+
+    lo = _find_libreoffice()
+    output_dir = Path(output_dir) if output_dir is not None else xlsx_path.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        lo,
+        "--headless",
+        # filter name pins the legacy BIFF8 writer (bare "xls" can be ambiguous).
+        "--convert-to", "xls:MS Excel 97",
+        "--outdir", str(output_dir),
+        str(xlsx_path),
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"LibreOffice conversion timed out after {timeout}s") from e
+
+    converted = output_dir / f"{xlsx_path.stem}.xls"
+    if not converted.exists():
+        xls_files = list(output_dir.glob(f"{xlsx_path.stem}*.xls"))
+        converted = xls_files[0] if xls_files else None
+
+    if converted is None:
+        raise RuntimeError(
+            f"LibreOffice conversion failed (exit {result.returncode}):\n"
+            f"  stdout: {result.stdout}\n"
+            f"  stderr: {result.stderr}"
+        )
+
+    if result.returncode != 0 and result.stderr:
+        warnings.warn(
+            f"LibreOffice exited with code {result.returncode}, "
+            f"but output file was created.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+    return converted
+
+
 # ── Format validation ────────────────────────────────────────────────
 
 def validate_xlsx_format(path: Path) -> None:
