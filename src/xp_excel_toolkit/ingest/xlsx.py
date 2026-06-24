@@ -243,8 +243,9 @@ def import_xlsx(
     *,
     on_progress: Callable[[str], None] | None = None,
     with_formulas: bool = False,
+    sheet_names: Iterable[str] | None = None,
 ) -> list[ExcelSheet]:
-    """Import all sheets from a .xlsx file. Cells/merges only.
+    """Import sheets from a .xlsx file. Cells/merges only.
 
     Args:
         session: SQLAlchemy session.
@@ -252,6 +253,10 @@ def import_xlsx(
         on_progress: Optional progress callback (sheet-level messages).
         with_formulas: If True, load formulas first then overlay cached
             values (loads the workbook twice).
+        sheet_names: If given, only these sheets are parsed into cells
+            (others are skipped). The original workbook blob is still stored
+            in full, so a later round-trip export preserves untouched sheets.
+            None (default) imports every sheet.
 
     Returns:
         List of created ExcelSheet rows in source order.
@@ -276,9 +281,13 @@ def import_xlsx(
     session.add(wb_obj)
     session.flush()
 
-    total = len(wb_xl.sheetnames)
+    names = list(wb_xl.sheetnames)
+    if sheet_names is not None:
+        want = set(sheet_names)
+        names = [n for n in names if n in want]
+    total = len(names)
     sheets: list[ExcelSheet] = []
-    for idx, name in enumerate(wb_xl.sheetnames, 1):
+    for idx, name in enumerate(names, 1):
         if on_progress:
             on_progress(f"  [{idx}/{total}] Importing sheet: {name}")
         ws = wb_xl[name]
