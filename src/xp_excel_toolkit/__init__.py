@@ -48,6 +48,7 @@ from xp_excel_toolkit.ingest.convert import (
     validate_xlsx_format,
 )
 from xp_excel_toolkit.ingest.xls import import_xls
+from xp_excel_toolkit.ingest.poi import ensure_jvm, write_xls_poi
 from xp_excel_toolkit.ingest.xlsx import (
     BULK_CHUNK,
     extract_cell_value,
@@ -115,6 +116,8 @@ __all__ = [
     "import_sheet",
     "import_xls",
     "import_xlsx",
+    "write_xls_poi",
+    "ensure_jvm",
     "init_db",
     "register_audit_target",
     "resolve_db",
